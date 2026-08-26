@@ -5,7 +5,7 @@
 **Do not open a public issue for a security problem.**
 
 Report it privately through GitHub's
-[private vulnerability reporting](https://github.com/suhasaraos/SuHarness/security/advisories/new)
+[private vulnerability reporting](https://github.com/suhasaraos/suharness-public/security/advisories/new)
 form, which opens a draft advisory visible only to the maintainers.
 
 Please include:

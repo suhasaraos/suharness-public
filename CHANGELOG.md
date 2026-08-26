@@ -10,7 +10,7 @@ names, parameter names, tool descriptions, and result formatting are treated as
 a model-facing contract: changes to them are called out as **Changed** even when
 no C# API moved, because they alter behaviour for existing sessions.
 
-## [Unreleased]
+## Unreleased
 
 ### Added
 
@@ -71,7 +71,7 @@ no C# API moved, because they alter behaviour for existing sessions.
   retaining after 250 matches, so traversal order decides which matches survive
   the cap, and the previous order was an artifact of depth-first traversal.
 
-## [0.1.0] - 2026-08-20
+## 0.1.0 - 2026-08-26
 
 First public release. SuHarness has been usable for a while; this is the point
 at which the repository became something other people can read, build, and
@@ -147,5 +147,4 @@ contribute to.
 - [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) covering the full 44-package
   dependency closure, all permissive.
 
-[Unreleased]: https://github.com/suhasaraos/SuHarness/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/suhasaraos/SuHarness/releases/tag/v0.1.0
+The dependency notice is updated whenever the restored package closure changes.

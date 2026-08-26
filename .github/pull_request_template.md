@@ -27,7 +27,7 @@ session.
 
 ## Security
 
-See [SECURITY.md](../blob/main/SECURITY.md).
+See [SECURITY.md](../SECURITY.md).
 
 - [ ] This does not weaken workspace path scoping, markdown sanitisation,
       credential storage, the approval gate, or the loopback binding policy.
@@ -39,5 +39,5 @@ See [SECURITY.md](../blob/main/SECURITY.md).
 - [ ] `dotnet test` passes
 - [ ] `dotnet format Suharness.slnx` leaves no changes
 - [ ] Tests added for new behaviour, or for the bug being fixed
-- [ ] `CHANGELOG.md` updated under `## [Unreleased]` if a user would notice
+- [ ] `CHANGELOG.md` updated under `## Unreleased` if a user would notice
 - [ ] `THIRD-PARTY-NOTICES.md` updated if a dependency was added

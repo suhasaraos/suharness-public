@@ -15,8 +15,8 @@
     <Product>SuHarness</Product>
     <Copyright>Copyright 2026 Suhas Rao</Copyright>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/suhasaraos/SuHarness</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/suhasaraos/SuHarness</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/suhasaraos/suharness-public</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/suhasaraos/suharness-public</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 

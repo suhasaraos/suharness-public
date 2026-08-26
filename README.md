@@ -25,11 +25,8 @@ The Web UI is served at `http://127.0.0.1:3090` by default. Session metadata and
 ## Design background
 
 [Why I Built SuHarness](docs/why-i-built-suharness.md) explains the local-model goal, how the
-prompt queue and team workflow emerged, what the comparison runs actually showed, and why the
+prompt queue and team workflow emerged, what evaluation failures revealed, and why the
 project is being developed in the open before it is finished.
-
-[Why the Harness Matters as Much as the Model](docs/design-and-evolution.md) is the earlier
-technical design history from the first public-release phase.
 
 ## Architecture
 
@@ -736,7 +733,7 @@ is governed by the [Code of Conduct](CODE_OF_CONDUCT.md), and notable changes ar
 [CHANGELOG.md](CHANGELOG.md).
 
 Security vulnerabilities should never be filed as public issues; report them privately through
-[GitHub's advisory form](https://github.com/suhasaraos/SuHarness/security/advisories/new).
+[GitHub's advisory form](https://github.com/suhasaraos/suharness-public/security/advisories/new).
 
 ## License
 
