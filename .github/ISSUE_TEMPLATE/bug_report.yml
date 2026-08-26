@@ -1,0 +1,72 @@
+name: Bug report
+description: Something in SuHarness behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do **not** report security vulnerabilities here — see
+        [SECURITY.md](../blob/main/SECURITY.md) for private reporting.
+
+        If you paste a transcript, **scrub it first**: transcripts can contain
+        file contents, absolute paths, and workspace names.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what actually occurred.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a workspace at ...
+        2. Send the prompt ...
+        3. The agent ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: SuHarness version or commit
+      placeholder: "0.1.0, or the commit SHA you built"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - Linux
+        - macOS
+    validations:
+      required: true
+
+  - type: input
+    id: dotnet
+    attributes:
+      label: .NET SDK version
+      description: Output of `dotnet --version`.
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Provider and model
+      description: Only if a model was involved. Never include an API key.
+      placeholder: "openrouter / some-model-id, or local llama.cpp"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Console output or a scrubbed transcript excerpt.
+      render: text

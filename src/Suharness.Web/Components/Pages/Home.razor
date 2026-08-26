@@ -1,0 +1,650 @@
+@page "/"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using System.Text.Json
+@inject HarnessRuntime Runtime
+@inject IModelConfigurationService Models
+@inject IWorkspaceService WorkspaceService
+@inject IUserQuestionBroker Questions
+@inject IPlanModeStore PlanMode
+@inject IImageAttachmentStore ImageAttachments
+@inject ISessionUsageTracker Usage
+@inject IAgentLifecycle Lifecycle
+@inject IJSRuntime JS
+
+<PageTitle>SuHarness</PageTitle>
+
+<div class="app-shell @(SidebarExpanded ? null : "sidebar-collapsed") @(ChangesAvailable ? ModifiedFilesExpanded ? "with-changes" : "with-changes changes-collapsed" : null)" @onclick="ClosePickerMenus">
+	<aside class="sidebar">
+		<div class="brand-row">
+			<div class="brand-mark">S</div>
+			<strong>SuHarness</strong>
+			<button class="icon-button collapse-button" type="button" title="@(SidebarExpanded ? "Collapse sidebar" : "Expand sidebar")" aria-label="@(SidebarExpanded ? "Collapse sidebar" : "Expand sidebar")" @onclick="ToggleSidebar">@(SidebarExpanded ? "‹" : "›")</button>
+		</div>
+
+		<button class="new-session" disabled="@IsSending" @onclick="CreateSessionAsync"><span>+</span> New session</button>
+
+		<div class="section-label">Workspace</div>
+		<button class="workspace-row" disabled="@IsSending" @onclick="OpenWorkspacePicker">
+			<span class="workspace-icon">&lt;/&gt;</span>
+			<span><strong>@WorkspaceName</strong><small>@WorkspacePath</small></span>
+			<span class="chevron">&rsaquo;</span>
+		</button>
+
+		<div class="section-label session-label">Sessions <span>@Sessions.Count</span></div>
+		<nav class="session-list">
+			@if (Sessions.Count == 0) { <p class="empty-list">No sessions yet</p> }
+			@foreach (var session in Sessions)
+			{
+				<div class="session-row-wrap">
+					<button class="session-row @(ActiveSession?.Session.Id == session.Id ? "active" : null)" disabled="@IsSending" @onclick="() => OpenSessionAsync(session.Id)">
+						<span class="status-dot"></span>
+						<span><strong>@session.Title</strong><small>@session.UpdatedAt.ToLocalTime().ToString("MMM d, h:mm tt") &middot; @TokenLabel(session)</small></span>
+					</button>
+					<div class="session-actions-wrap sidebar-session-actions @(ShowSessionActions && SessionActionsTarget?.Id == session.Id ? "open" : null)" @onclick:stopPropagation="true">
+						<button class="session-actions-button" title="Session actions" aria-label="Actions for @session.Title" disabled="@IsSending" @onclick="() => ToggleSessionActions(session)">&#8943;</button>
+						@if (ShowSessionActions && SessionActionsTarget?.Id == session.Id)
+						{
+							<div class="session-actions-menu"><button @onclick="() => BeginRename(session)">Rename</button><button @onclick="() => ExportSessionAsync(session)">Export JSON</button><button class="danger-text" @onclick="() => ConfirmArchive(session)">Archive</button></div>
+						}
+					</div>
+					<button class="session-delete" title="Delete session" aria-label="Delete @session.Title" disabled="@IsSending" @onclick="() => ConfirmDelete(session)">&#128465;</button>
+				</div>
+			}
+		</nav>
+
+	</aside>
+
+	<main class="main-panel @(PendingQuestions is not null ? "answering-questions" : null)">
+		<header class="topbar">
+			<div><strong>@(ActiveSession?.Session.Title ?? "New session")</strong><span class="header-path">@WorkspacePath</span></div>
+			<div class="top-actions"><button class="mcp-state" @onclick="OpenPromptQueue">Prompt Queue</button><button class="mcp-state" @onclick="OpenMcpSettings">MCP Servers</button><button class="mcp-state" @onclick="OpenWorkspaceAgentSettings">.suharness</button><button class="model-state @(ModelReady ? "ready" : CurrentSelection is null ? null : "warning")" title="@ModelStatusTitle" @onclick="OpenModels"><span></span>@ModelLabel</button></div>
+		</header>
+
+		<section class="conversation" @ref="ConversationElement">
+			@if (ActiveSession is null || VisibleEvents(ActiveSession.Events).Count == 0 && !IsSending)
+			{
+				<div class="welcome">
+					<div class="welcome-mark">S</div>
+					<h1>@(CurrentWorkspace is null ? "How can I help?" : "What are we building?")</h1>
+					<p>@(CurrentWorkspace is null ? "Connected remote tools are available." : $"SuHarness can inspect, run, and update code in {WorkspaceName} with the selected model.")</p>
+					<div class="suggestions">
+						@foreach (var suggestion in CurrentSuggestions)
+						{
+							<button @onclick="() => Prompt = suggestion"><span>@SuggestionIcon(suggestion)</span>@suggestion</button>
+						}
+					</div>
+				</div>
+			}
+			else
+			{
+				<div class="transcript">
+					@foreach (var item in VisibleEvents(ActiveSession.Events))
+					{
+						@if (item.Type == "tool_call")
+						{
+							var result = ToolResultFor(item);
+							var workflow = CodingWorkflowFor(item);
+							<details class="tool-event @item.Type @(workflow is null ? null : "coding-workflow-event")" open="@(workflow is not null)">
+								<summary><span>@ToolSummary(item)</span><small>@ToolStatus(result?.Content, "No result")</small></summary>
+								@if (workflow is null)
+								{
+									<pre>@(result?.Content ?? item.Content)</pre>
+								}
+								else
+								{
+									<div class="workflow-stages">
+										<header><strong>@workflow.Status</strong><span>@workflow.Stages.Count stages@(workflow.RepairRounds > 0 ? $" · {workflow.RepairRounds} repair round(s)" : string.Empty)</span></header>
+										@foreach (var stage in workflow.Stages)
+										{
+											<section class="workflow-stage @stage.Status">
+												<div><strong>@WorkflowRoleLabel(stage.Role)</strong><small>@stage.Status</small></div>
+												@if (!string.IsNullOrWhiteSpace(stage.Summary)) { <p>@stage.Summary</p> }
+												@if (!string.IsNullOrWhiteSpace(stage.Handoff))
+												{
+													<details class="workflow-handoff"><summary>Structured handoff</summary><pre>@stage.Handoff</pre></details>
+												}
+											</section>
+										}
+									</div>
+								}
+							</details>
+						}
+						else if (item.Type == "tool_result")
+						{
+							@if (!HasToolCall(item))
+							{
+								<details class="tool-event @item.Type">
+									<summary>@ToolSummary(item)</summary>
+									<pre>@item.Content</pre>
+								</details>
+							}
+						}
+						else
+						{
+							<article class="message @item.Role @item.Type">
+								<div class="message-author">
+									<span>@(item.Role == "user" ? "You" : item.Role == "assistant" ? "SuHarness" : "Runtime")</span>
+									@if (item.Role == "user" && item.Type == "message" && RevertPoints.ContainsKey(item.Id))
+									{
+										<button class="revert-button" type="button" disabled="@(IsSending || RevertBusy)"
+											title="Undo this message and roll the workspace back to how it was before it"
+											@onclick="() => AskRevertAsync(item.Id)">Undo from here</button>
+									}
+								</div>
+								@if (item.Role == "assistant") { <MarkdownContent Content="@item.Content" /> }
+								else { <div class="message-content">@item.Content</div> }
+								@if (item.Attachments is { Count: > 0 })
+								{
+									<div class="message-images">
+										@foreach (var image in item.Attachments)
+										{
+											<a href="@AttachmentUrl(image.Id)" target="_blank" title="Open @image.Name"><img src="@AttachmentUrl(image.Id)" alt="@image.Name" /></a>
+										}
+									</div>
+								}
+								<time>@item.CreatedAt.ToLocalTime().ToString("h:mm tt")@TurnTokenSuffix(item)</time>
+							</article>
+						}
+					}
+					@if (!string.IsNullOrEmpty(PendingPrompt))
+					{
+						<article class="message user pending-message">
+							<div class="message-author">You</div>
+							<div class="message-content">@PendingPrompt</div>
+							@if (PendingAttachmentRefs.Count > 0)
+							{
+								<div class="message-images">
+									@foreach (var image in PendingAttachmentRefs)
+									{
+										<img src="@AttachmentUrl(image.Id)" alt="@image.Name" />
+									}
+								</div>
+							}
+						</article>
+					}
+					@foreach (var item in LiveItems)
+					{
+						@if (item.Type is "tool_call" or "tool_result")
+						{
+							<details @key="item.Seq" class="tool-event @item.Type live-tool-event">
+								<summary><span>@LiveToolSummary(item)</span><small>@ToolStatus(item.Result, "Running")</small></summary>
+								<pre>@(item.Result ?? item.Content)</pre>
+							</details>
+						}
+						else
+						{
+							<article @key="item.Seq" class="message assistant live-message" aria-live="polite">
+								<div class="message-author">SuHarness</div>
+								<MarkdownContent Content="@item.Content" />
+							</article>
+						}
+					}
+					@if (IsSending)
+					{
+						<div class="agent-activity live-run-status" aria-live="polite"><span></span>@(LiveActivity ?? "Thinking")</div>
+					}
+				</div>
+			}
+		</section>
+
+		@if (CurrentTodos.Count > 0)
+		{
+			<section class="todo-panel" aria-label="Task list">
+				<div class="todo-heading">Tasks <span>@CurrentTodos.Count(todo => todo.Status == "completed")/@CurrentTodos.Count</span></div>
+				<ul>
+					@foreach (var todo in CurrentTodos)
+					{
+						<li class="todo-item @todo.Status"><span class="todo-mark" aria-hidden="true">@TodoMark(todo.Status)</span>@todo.Content</li>
+					}
+				</ul>
+			</section>
+		}
+
+		@if (PendingQuestions is not null)
+		{
+			<section class="question-panel" aria-label="SuHarness needs an answer">
+				<div class="question-list">
+					@foreach (var question in PendingQuestions.Questions)
+					{
+						<div class="question-block">
+							@if (!string.IsNullOrWhiteSpace(question.Header)) { <div class="question-header">@question.Header</div> }
+							<p class="question-text">@question.Question</p>
+							@if (!string.IsNullOrWhiteSpace(question.Detail))
+							{
+								<div class="question-detail"><MarkdownContent Content="@question.Detail" /></div>
+							}
+							@if (question.Options is { Count: > 0 })
+							{
+								<div class="question-options">
+									@foreach (var option in question.Options.Where(option => option.Label != question.ApproveAllOption))
+									{
+										<button type="button"
+											class="question-option @(IsChosen(question, option.Label) ? "chosen" : null)"
+											@onclick="() => ToggleChoice(question, option.Label)">
+											<strong>@option.Label</strong>
+											@if (!string.IsNullOrWhiteSpace(option.Description)) { <small>@option.Description</small> }
+										</button>
+									}
+								</div>
+							}
+							<input class="question-custom"
+								placeholder="@(question.Options is { Count: > 0 } ? "Or answer in your own words..." : "Your answer...")"
+								value="@CustomAnswer(question.Id)"
+								@oninput="eventArgs => SetCustomAnswer(question.Id, eventArgs.Value?.ToString())" />
+						</div>
+					}
+				</div>
+				<div class="question-actions">
+					<button class="secondary-button" @onclick="DismissQuestions">Dismiss</button>
+					@if (CanApproveAll) { <button class="approve-all-button" @onclick="ApproveAllQuestions">Approve all</button> }
+					<button class="primary-button" disabled="@(!CanSubmitAnswers)" @onclick="SubmitAnswers">Send answer</button>
+				</div>
+			</section>
+		}
+
+		<div class="composer-wrap">
+			<div class="composer">
+				@if (AttachmentDrafts.Count > 0)
+				{
+					<div class="attachment-drafts" aria-label="Selected images">
+						@foreach (var image in AttachmentDrafts)
+						{
+							<div class="attachment-draft"><img src="@image.Preview" alt="@image.Name" /><button type="button" title="Remove @image.Name" @onclick="() => RemoveAttachment(image)">&times;</button></div>
+						}
+					</div>
+				}
+				<textarea value="@Prompt" @oninput="UpdatePrompt" @onkeyup="HandleComposerKeyUp" placeholder="@(CurrentSelection is null ? "Configure a model to start..." : IsSending ? "Queue a message for the next round..." : "Ask SuHarness to work on your code...")" disabled="@(CurrentSelection is null)"></textarea>
+				<div class="composer-actions">
+					<div class="composer-left">
+						<label for="image-attachment-input" class="icon-button attachment-button @(CurrentSelection is null || IsSending ? "disabled" : null)" title="Attach images">+</label>
+						<InputFile id="image-attachment-input" class="attachment-input" OnChange="SelectImagesAsync" accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled="@(CurrentSelection is null || IsSending)" />
+						@if (CurrentWorkspace is not null)
+						{
+							<button class="mode-button plan-toggle @(IsPlanMode ? "on" : null)" title="Plan mode: explore and propose a plan before changing anything" disabled="@IsSending" @onclick="TogglePlanMode">
+								<span class="control-icon" aria-hidden="true">&#9635;</span>
+								<span class="trigger-label">Plan</span>
+							</button>
+							<div class="team-picker-wrap" @onclick:stopPropagation="true">
+								<button class="mode-button picker-trigger team-trigger @(TeamConfiguration.Enabled ? "on" : null)" title="Team mode: run coding requests through assigned personas" disabled="@(IsSending || CurrentSelection is null)" @onclick="ToggleTeamPicker">
+									<span class="control-icon" aria-hidden="true">&#9672;</span>
+									<span class="trigger-label">Team</span>
+								</button>
+								@if (ShowTeamPicker)
+								{
+									<div class="picker-menu team-menu" role="menu" aria-label="Team model assignments">
+										<div class="team-menu-header"><strong>Team models</strong><small>Coding requests use these personas.</small></div>
+										@foreach (var persona in CodingPersonas)
+										{
+											<label class="team-persona-row">
+												<span>@PersonaLabel(persona)</span>
+												<select title="@TeamModelLabel(TeamConfiguration.ModelFor(persona))" value="@TeamModelKey(TeamConfiguration.ModelFor(persona))" @onchange="eventArgs => SelectTeamModelAsync(persona, eventArgs)">
+													@foreach (var provider in ModelSnapshot.Providers)
+													{
+														@foreach (var model in provider.Profile.Models)
+														{
+															<option value="@TeamModelKey(new ModelSelection(provider.Profile.Id, model.Id))">@TeamModelOptionLabel(provider.Profile.DisplayName, model.Name, model.Id)</option>
+														}
+													}
+												</select>
+											</label>
+										}
+										<button class="manage-models team-standard" @onclick="DisableTeamAsync">Use standard agent</button>
+									</div>
+								}
+							</div>
+							<div class="access-picker-wrap" @onclick:stopPropagation="true">
+							<button class="mode-button picker-trigger access-trigger" title="Access mode" disabled="@IsSending" @onclick="ToggleAccessPicker">
+								<span class="control-icon access-icon" aria-hidden="true">@AccessModeIcon(CurrentAccessMode)</span>
+								<span class="trigger-label">@AccessModeLabel(CurrentAccessMode)</span>
+							</button>
+							@if (ShowAccessPicker)
+							{
+								<div class="picker-menu access-menu" role="menu" aria-label="Access mode">
+									@foreach (var accessMode in AccessModes)
+									{
+										<button class="@(CurrentAccessMode == accessMode ? "selected" : null)" role="menuitem" @onclick="() => SelectAccessModeAsync(accessMode)">
+											<span class="option-main"><span class="control-icon access-icon" aria-hidden="true">@AccessModeIcon(accessMode)</span><span>@AccessModeLabel(accessMode)</span></span>
+											@if (CurrentAccessMode == accessMode) { <span class="selected-check" aria-hidden="true">&#10003;</span> }
+										</button>
+									}
+								</div>
+							}
+							</div>
+						}
+						<div class="model-picker-wrap" @onclick:stopPropagation="true">
+							<button class="mode-button picker-trigger model-trigger" disabled="@IsSending" @onclick="ToggleModelPicker">
+								<span class="control-icon model-icon" aria-hidden="true">&#9670;</span>
+								<span class="trigger-label">@ModelButtonLabel</span>
+							</button>
+						@if (ShowModelPicker)
+						{
+							<div class="picker-menu model-menu" role="menu" aria-label="Model selection">
+								@if (ModelSnapshot.Providers.Count == 0) { <button @onclick="OpenModels">Configure a provider</button> }
+								@foreach (var provider in ModelSnapshot.Providers)
+								{
+									<div class="model-group-label">@provider.Profile.DisplayName</div>
+									@foreach (var model in provider.Profile.Models)
+									{
+										@* Only the route and the model decide which entry is ticked. Comparing whole
+										   selections would untick the running model the moment a session overrode its
+										   reasoning effort, because that override is part of the selection record. *@
+										var current = IsCurrentModel(provider.Profile.Id, model.Id);
+										<button class="@(current ? "selected" : null)" role="menuitem" @onclick="() => SelectModelAsync(new ModelSelection(provider.Profile.Id, model.Id))"><span class="option-main"><span class="control-icon model-icon" aria-hidden="true">&#9670;</span><span>@model.Name</span></span>@if (current) { <span class="selected-check" aria-hidden="true">&#10003;</span> }</button>
+									}
+								}
+								@* The effort override lasts as long as this session's selection and is dropped when a
+								   different model is picked, since a level chosen for a reasoning model means nothing
+								   to one that does not reason. *@
+								@if (CurrentSelection is not null)
+								{
+									<div class="model-group-label">Reasoning effort</div>
+									<button class="@(CurrentSelection.ReasoningEffort is null ? "selected" : null)" role="menuitem" @onclick="() => SelectReasoningEffortAsync(null)"><span class="option-main"><span class="control-icon model-icon" aria-hidden="true">&#9670;</span><span>@ModelDefaultEffortLabel</span></span>@if (CurrentSelection.ReasoningEffort is null) { <span class="selected-check" aria-hidden="true">&#10003;</span> }</button>
+									@foreach (var level in Enum.GetValues<ReasoningEffortLevel>())
+									{
+										var chosen = CurrentSelection.ReasoningEffort == level;
+										<button class="@(chosen ? "selected" : null)" role="menuitem" @onclick="() => SelectReasoningEffortAsync(level)"><span class="option-main"><span class="control-icon model-icon" aria-hidden="true">&#9670;</span><span>@level</span></span>@if (chosen) { <span class="selected-check" aria-hidden="true">&#10003;</span> }</button>
+									}
+								}
+								<button class="manage-models" @onclick="OpenModels">Manage models...</button>
+							</div>
+						}
+						</div>
+					</div>
+					<div class="composer-right">
+						@* How full the model's context is, from the last request the session made. The figure in
+						   the control is the one worth watching while working; the breakdown behind it carries the
+						   exact counts and the two totals it must not be confused with. *@
+						<div class="composer-context-wrap" @onclick:stopPropagation="true" @onmouseenter="OpenContext" @onmouseleave="LeaveContext">
+							<button class="composer-context @(ContextUsageKnown ? null : "muted")" type="button"
+								aria-label="Token and context usage"
+								aria-describedby="@(ContextOpen ? ContextPopoverId : null)"
+								aria-expanded="@(ContextOpen ? "true" : "false")"
+								@onfocus="OpenContext" @onblur="LeaveContext"
+								@onclick="PinContext" @onkeydown="ContextKeyDown"><span class="context-dot" aria-hidden="true">&#9673;</span><span class="context-figure">@ContextLabel</span></button>
+							@if (ContextOpen && UsageView is { } view)
+							{
+								<section class="usage-popover" role="tooltip" id="@ContextPopoverId">
+									<header><strong>Token usage</strong><small>@ContextModelLabel</small></header>
+
+									<div class="usage-section">Current context</div>
+									@if (view.Context is { HasInput: true } context)
+									{
+										@if (context.UsedFraction is { } fraction)
+										{
+											<div class="usage-meter" role="img" aria-label="@($"Context {UsageFormat.Percent(fraction)} used")">
+												<span style="width:@(Math.Clamp(fraction * 100, 0, 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))%"></span>
+											</div>
+										}
+										<ul>
+											<li><span>Input@(context.Estimated ? " (estimated)" : null)</span><span class="cost-line-detail">@UsageFormat.Exact(context.InputTokens)</span></li>
+											<li><span>Cached</span><span class="cost-line-detail">@UsageFormat.Exact(context.CachedInputTokens)</span></li>
+											<li><span>Non-cached</span><span class="cost-line-detail">@UsageFormat.Exact(context.NonCachedInputTokens)</span></li>
+											<li><span>Context window</span><span class="cost-line-detail">@UsageFormat.Exact(context.ContextWindow)</span></li>
+											<li><span>Context used</span><span class="cost-line-detail">@UsageFormat.Percent(context.UsedFraction)</span></li>
+											<li><span>Max output</span><span class="cost-line-detail">@UsageFormat.Exact(context.MaxOutputTokens)</span></li>
+											<li><span>Safe remaining</span><span class="cost-line-detail">@UsageFormat.Exact(context.SafeRemaining)</span></li>
+										</ul>
+										@if (context.Estimated)
+										{
+											<p class="cost-note">This provider reported no prompt count, so the input figure is SU Harness's own estimate of the request it sent. It is shown for context pressure only and is never counted or priced.</p>
+										}
+									}
+									else
+									{
+										<p class="cost-unavailable">@ContextUnavailableReason</p>
+									}
+
+									<div class="usage-section">Current turn</div>
+									@if (view.Turn is { } turn)
+									{
+										<ul>
+											<li><span>Model calls</span><span class="cost-line-detail">@turn.ModelCalls.ToString("N0")</span></li>
+											<li><span>Input processed</span><span class="cost-line-detail">@UsageFormat.Exact(turn.Totals.InputTokens)</span></li>
+											<li><span>Cached input</span><span class="cost-line-detail">@UsageFormat.Exact(turn.Totals.CachedInputTokens)</span></li>
+											<li><span>Output generated</span><span class="cost-line-detail">@UsageFormat.Exact(turn.Totals.OutputTokens)</span></li>
+											@if (turn.Totals.ReasoningTokens is { } turnReasoning)
+											{
+												<li><span>Reasoning</span><span class="cost-line-detail">@UsageFormat.Exact(turnReasoning)</span></li>
+											}
+											<li><span>Total processed</span><span class="cost-line-detail">@UsageFormat.Exact(turn.Totals.TotalTokens)</span></li>
+										</ul>
+									}
+									else
+									{
+										<p class="cost-unavailable">No turn has run in this session since SU Harness started.</p>
+									}
+
+									<div class="usage-section">Session</div>
+									<ul>
+										<li><span>Model calls</span><span class="cost-line-detail">@view.Session.Invocations.ToString("N0")</span></li>
+										<li><span>Input processed</span><span class="cost-line-detail">@UsageFormat.Exact(view.Session.Totals.InputTokens)</span></li>
+										<li><span>Cached input</span><span class="cost-line-detail">@UsageFormat.Exact(view.Session.Totals.CachedInputTokens)</span></li>
+										<li><span>Output generated</span><span class="cost-line-detail">@UsageFormat.Exact(view.Session.Totals.OutputTokens)</span></li>
+										@if (view.Session.Totals.ReasoningTokens is { } sessionReasoning)
+										{
+											<li><span>Reasoning</span><span class="cost-line-detail">@UsageFormat.Exact(sessionReasoning)</span></li>
+										}
+										<li><span>Total processed</span><span class="cost-line-detail">@UsageFormat.Exact(view.Session.Totals.TotalTokens)</span></li>
+									</ul>
+									@if (view.Session.UsageUnreported)
+									{
+										<p class="cost-note">Usage not reported by provider.</p>
+									}
+									<p class="cost-note">Turn and session figures are tokens processed, not context held: every request replays the conversation, so the same history is counted again each time.</p>
+								</section>
+							}
+						</div>
+						@* Cost sits with the send control rather than in the session list, and is priced
+						   only once the reader asks — hovering, focusing, or opening it is what runs the
+						   calculation for the session on screen. *@
+						<div class="composer-cost-wrap" @onclick:stopPropagation="true" @onmouseenter="OpenActiveCost" @onmouseleave="LeaveCost">
+							<button class="composer-cost @(ActiveSessionHasUsage ? null : "muted")" type="button"
+								aria-label="Session cost details"
+								aria-describedby="@(CostSession is not null ? CostPopoverId : null)"
+								aria-expanded="@(CostSession is not null ? "true" : "false")"
+								@onfocus="OpenActiveCost" @onblur="LeaveCost"
+								@onclick="PinActiveCost" @onkeydown="CostKeyDown">$</button>
+							@if (CostSession is not null && Cost is not null)
+							{
+								<section class="cost-popover" role="tooltip" id="@CostPopoverId">
+									<header><strong>@CostHeading</strong><small>@CostSessionTitle</small></header>
+									@if (Cost.Kind == SessionCostKind.Unavailable)
+									{
+										<p class="cost-unavailable">@CostUnavailableReason</p>
+									}
+									else
+									{
+										<div class="cost-amount">@(Cost.Kind == SessionCostKind.Estimated ? "~" : string.Empty)@UsageFormat.Money(Cost.Amount)</div>
+										<ul>
+											@foreach (var component in Cost.Components)
+											{
+												<li>
+													<span>@component.Label</span>
+													<span class="cost-line-detail">
+														@if (component.PricePerMillion is not null)
+														{
+															@($"{UsageFormat.Exact(component.Tokens)} × {UsageFormat.Rate(component.PricePerMillion)} = ")
+														}
+														@UsageFormat.Money(component.Cost)
+													</span>
+												</li>
+											}
+										</ul>
+										<div class="cost-total"><span>Displayed</span><span>@UsageFormat.Money(Cost.Amount)</span></div>
+									}
+									<ul class="cost-tokens">
+										<li><span>Input</span><span class="cost-line-detail">@UsageFormat.Exact(CostUsage?.Totals.InputTokens)</span></li>
+										<li><span>Output</span><span class="cost-line-detail">@UsageFormat.Exact(CostUsage?.Totals.OutputTokens)</span></li>
+										<li><span>Total</span><span class="cost-line-detail">@UsageFormat.Exact(CostUsage?.Totals.TotalTokens)</span></li>
+										@if (CostUsage?.Totals.ReasoningTokens is { } reasoning)
+										{
+											<li><span>Reasoning</span><span class="cost-line-detail">@UsageFormat.Exact(reasoning)</span></li>
+										}
+										@if (CostUsage?.Totals.CachedInputTokens is { } cachedRead)
+										{
+											<li><span>Cached input</span><span class="cost-line-detail">@UsageFormat.Exact(cachedRead)</span></li>
+										}
+										@if (CostUsage?.Totals.CachedWriteTokens is { } cachedWrite)
+										{
+											<li><span>Cache writes</span><span class="cost-line-detail">@UsageFormat.Exact(cachedWrite)</span></li>
+										}
+									</ul>
+									@if (CostUsage?.UsageUnreported == true)
+									{
+										<p class="cost-note">Usage not reported by provider.</p>
+									}
+									@if (Cost.UnpricedModels.Count > 0 && Cost.Kind != SessionCostKind.Unavailable)
+									{
+										<p class="cost-note">No pricing configured for @string.Join(", ", Cost.UnpricedModels), so that usage is not included.</p>
+									}
+									@if (Cost.Kind == SessionCostKind.Estimated)
+									{
+										<p class="cost-note">@UsageFormat.EstimateDisclaimer</p>
+									}
+									else if (Cost.Kind == SessionCostKind.Actual)
+									{
+										<p class="cost-note">Reported by the provider as the billed cost of these requests.</p>
+									}
+								</section>
+							}
+						</div>
+						@if (IsSending)
+						{
+							<div class="running-actions">
+								<button class="send-button" title="Queue message" disabled="@(string.IsNullOrWhiteSpace(Prompt))" @onclick="SendAsync">&#8593;</button>
+								<button class="send-button stop-button" title="Stop generation" @onclick="Stop">&#9632;</button>
+							</div>
+						}
+						else
+						{
+							<button class="send-button" title="Send" disabled="@(!ModelReady || !CanSend)" @onclick="SendAsync">&#8593;</button>
+						}
+					</div>
+				</div>
+			</div>
+			@if (CanRedo)
+			{
+				<div class="redo-bar" role="status">
+					<span>This session was rolled back. The files it replaced are still recoverable.</span>
+					<button class="secondary-button" type="button" disabled="@(IsSending || RevertBusy)" @onclick="RedoAsync">Redo</button>
+				</div>
+			}
+			@if (!string.IsNullOrWhiteSpace(RevertError) && RevertTarget is null) { <p class="attachment-error" role="alert">@RevertError</p> }
+			@if (!string.IsNullOrWhiteSpace(AttachmentError)) { <p class="attachment-error" role="alert">@AttachmentError</p> }
+			<p class="composer-note @(CurrentSelection is not null && !ModelReady ? "configuration-error" : null)">@ComposerNote</p>
+		</div>
+	</main>
+
+	@if (ChangesAvailable)
+	{
+		<aside class="changes-panel" aria-label="Modified files">
+			<header>
+				<button class="changes-toggle" type="button" title="@(ModifiedFilesExpanded ? "Collapse modified files" : "Expand modified files")" @onclick="ToggleModifiedFiles">
+					<span aria-hidden="true">@(ModifiedFilesExpanded ? "›" : "‹")</span>
+					<strong>Modified Files</strong>
+					<small>@ModifiedFiles.Count</small>
+				</button>
+			</header>
+			@if (ModifiedFilesExpanded)
+			{
+				<div class="changes-list">
+					@if (ModifiedFiles.Count == 0)
+					{
+						<p class="empty-list">No session changes</p>
+					}
+					@foreach (var file in ModifiedFiles)
+					{
+						<div class="change-row" title="@FullChangePath(file)">
+							<button class="change-file" type="button" @onclick="() => OpenFileDiffAsync(file)">
+								<span class="change-kind @file.Kind.ToString().ToLowerInvariant()">@ChangeKindLetter(file.Kind)</span>
+								<span>@ChangeDisplayName(file)</span>
+							</button>
+							<button class="change-revert" type="button" title="Revert changes to this file" aria-label="Revert changes to @ChangeDisplayName(file)" disabled="@(IsSending || FileActionBusy)" @onclick="() => AskFileRevert(file)">&#8630;</button>
+						</div>
+					}
+				</div>
+				@if (!string.IsNullOrWhiteSpace(ChangesError)) { <p class="changes-error" role="status">@ChangesError</p> }
+			}
+		</aside>
+	}
+</div>
+
+<ModelsSettings Open="ShowModels" InitialSection="@SettingsSection" WorkspaceRoot="@CurrentWorkspace?.Path" OnClose="CloseModels" OnChanged="RefreshModelsAsync" />
+<PromptQueueModal Open="ShowPromptQueue" WorkspacePath="@CurrentWorkspace?.Path" OnClose="ClosePromptQueue" OnOpenSession="OpenQueuedSessionAsync" />
+<WorkspacePicker Open="ShowWorkspacePicker" SelectedId="CurrentWorkspace?.Id" OnSelect="SelectWorkspaceAsync" OnSelectNone="SelectNoWorkspaceAsync" OnRemoved="WorkspaceRemovedAsync" OnClose="CloseWorkspacePicker" />
+
+@if (RenamingSession && SessionOperationTarget is not null)
+{
+	<div class="modal-backdrop"><section class="confirm-dialog" role="dialog" aria-label="Rename session"><h3>Rename session</h3><input class="dialog-input" @bind="SessionTitleDraft" @bind:event="oninput" /><div><button class="secondary-button" @onclick="CancelRename">Cancel</button><button class="primary-button" disabled="@(string.IsNullOrWhiteSpace(SessionTitleDraft))" @onclick="RenameAsync">Save</button></div></section></div>
+}
+@if (ArchivingSession && SessionOperationTarget is not null)
+{
+	<div class="modal-backdrop"><section class="confirm-dialog" role="alertdialog" aria-label="Archive session"><h3>Archive @SessionOperationTarget.Title?</h3><p>The transcript remains on disk but is hidden from this workspace.</p><div><button class="secondary-button" @onclick="CancelArchive">Cancel</button><button class="danger-button solid" @onclick="ArchiveAsync">Archive session</button></div></section></div>
+}
+@if (RevertTarget is not null)
+{
+	<div class="modal-backdrop">
+		<section class="confirm-dialog" role="alertdialog" aria-label="Undo from here">
+			<h3>Undo from this message?</h3>
+			@if (RevertBusy && RevertPreview.Count == 0 && RevertError is null)
+			{
+				<p>Working out what would change...</p>
+			}
+			else if (RevertPreview.Count == 0)
+			{
+				<p>No files differ from the snapshot taken before this message. The conversation from here will still be undone.</p>
+			}
+			else
+			{
+				<p>@RevertPreview.Count file@(RevertPreview.Count == 1 ? "" : "s") in the workspace will be rolled back to how they were before this message, and the conversation from here will be undone.</p>
+				<ul class="revert-preview">
+					@foreach (var change in RevertPreview.Take(12))
+					{
+						<li><span class="revert-kind @change.Kind.ToString().ToLowerInvariant()">@RevertVerb(change.Kind)</span> @change.Path</li>
+					}
+					@if (RevertPreview.Count > 12) { <li class="revert-more">and @(RevertPreview.Count - 12) more</li> }
+				</ul>
+			}
+			<p class="revert-caveat">Shell side effects — installs, migrations, anything sent over the network — are not covered. This can be reversed with Redo.</p>
+			@if (!string.IsNullOrWhiteSpace(RevertError)) { <p class="attachment-error" role="alert">@RevertError</p> }
+			<div>
+				<button class="secondary-button" @onclick="CancelRevert" disabled="@RevertBusy">Cancel</button>
+				<button class="danger-button solid" @onclick="ConfirmRevertAsync" disabled="@RevertBusy">Undo</button>
+			</div>
+		</section>
+	</div>
+}
+@if (DeletingSession is not null)
+{
+	<div class="modal-backdrop"><section class="confirm-dialog" role="alertdialog" aria-label="Delete session"><h3>Delete @DeletingSession.Title?</h3><p>This permanently deletes the session and its transcript. This action cannot be undone.</p><div><button class="secondary-button" @onclick="CancelDelete">Cancel</button><button class="danger-button solid" @onclick="DeleteAsync">Delete session</button></div></section></div>
+}
+@if (DiffFile is not null)
+{
+	<div class="modal-backdrop" @onclick="CloseFileDiff">
+		<section class="diff-dialog" role="dialog" aria-label="Modified file" @onclick:stopPropagation="true">
+			<header><div><h3>Modified File</h3><p>@DiffFile.Change.Path</p></div><button class="icon-button" title="Close diff" @onclick="CloseFileDiff">&times;</button></header>
+			<div class="diff-viewer" aria-label="Git diff">
+				@if (DiffBusy) { <p class="diff-state">Loading diff...</p> }
+				else if (!string.IsNullOrWhiteSpace(DiffError)) { <p class="diff-state error">@DiffError</p> }
+				else
+				{
+					<pre>@foreach (var line in DiffLines)
+						{<code class="@DiffLineClass(line)">@line</code>}</pre>
+				}
+			</div>
+			<footer><button class="secondary-button" @onclick="CloseFileDiff">Close</button></footer>
+		</section>
+	</div>
+}
+@if (FileRevertTarget is not null)
+{
+	<div class="modal-backdrop confirm-layer">
+		<section class="confirm-dialog" role="alertdialog" aria-label="Revert modified file">
+			<h3>Revert @ChangeDisplayName(FileRevertTarget)?</h3>
+			<p>This will undo changes made to this file by SuHarness during this session. Changes that existed at session start are preserved.</p>
+			@if (!string.IsNullOrWhiteSpace(FileActionError)) { <p class="attachment-error" role="alert">@FileActionError</p> }
+			<div><button class="secondary-button" disabled="@FileActionBusy" @onclick="CancelFileRevert">Cancel</button><button class="danger-button solid" disabled="@FileActionBusy" @onclick="ConfirmFileRevertAsync">Revert</button></div>
+		</section>
+	</div>
+}

@@ -1,0 +1,228 @@
+@inject IMcpConfigurationService Mcp
+@inject IMcpToolProvider McpTools
+
+<header class="settings-heading">
+	<div>
+		<h2>MCP servers</h2>
+		<p>Connect Model Context Protocol servers. Their tools reach the agent as <code>mcp__server__tool</code>. Keys are write-only.</p>
+	</div>
+	<button class="icon-button" title="Close settings" @onclick="OnClose">x</button>
+</header>
+
+@if (!string.IsNullOrEmpty(Status)) { <p class="settings-status" role="status">@Status</p> }
+
+<ul class="provider-list">
+	@foreach (var server in Snapshot.Servers)
+	{
+		var live = McpTools.Servers.FirstOrDefault(item => item.Name == server.Config.Name);
+		<li>
+			<div class="provider-summary">
+				<span class="credential-dot @(server.CredentialConfigured ? "configured" : "missing")" title="@(server.CredentialConfigured ? "API key configured" : "No API key stored")"></span>
+				<div>
+					<strong>@server.Config.Name</strong>
+					<small>
+						@(server.Config.Transport == McpTransport.Stdio ? server.Config.Command : server.Config.Url)
+						@if (live is not null) { <text> &middot; @live.State.ToString().ToLowerInvariant() (@live.ToolCount tools)</text> }
+						@if (!server.Config.Enabled) { <text> &middot; disabled</text> }
+						@if (server.Config.RequiresApproval) { <text> &middot; asks before each call</text> }
+					</small>
+				</div>
+				<button class="secondary-button" @onclick="() => Edit(server.Config)">Edit</button>
+				<button class="danger-button" @onclick="() => ConfirmDelete = server.Config">Delete</button>
+			</div>
+			@if (live?.Detail is { Length: > 0 } detail) { <p class="editor-error">@detail</p> }
+			@if (EditingName == server.Config.Name) { @Editor() }
+		</li>
+	}
+</ul>
+
+@if (EditingName == NewServerName) { @Editor() }
+else
+{
+	<div class="mcp-add-row">
+		<button class="add-provider-button" @onclick="() => NewServer(null)"><span>+</span> Add MCP server</button>
+		<button class="text-button" @onclick="() => NewServer(Preset.Exa)">Add Exa web search</button>
+		<button class="text-button" @onclick="() => NewServer(Preset.Unity)">Add Unity Editor</button>
+	</div>
+}
+
+@if (ConfirmDelete is not null)
+{
+	<div class="modal-backdrop confirm-layer">
+		<section class="confirm-dialog" role="alertdialog" aria-label="Delete MCP server">
+			<h3>Delete @ConfirmDelete.Name?</h3>
+			<p>This removes the server and any API key stored for it. Its tools disappear from the next turn.</p>
+			<div>
+				<button class="secondary-button" @onclick="() => ConfirmDelete = null">Cancel</button>
+				<button class="danger-button solid" @onclick="DeleteAsync">Delete server</button>
+			</div>
+		</section>
+	</div>
+}
+
+@code {
+	private const string NewServerName = "__new__";
+
+	/// <summary>The ready-made entries for the two servers this harness is most often pointed at.</summary>
+	private enum Preset { Exa, Unity }
+
+	[Parameter] public EventCallback OnClose { get; set; }
+
+	private McpConfigurationSnapshot Snapshot { get; set; } = McpConfigurationSnapshot.Empty;
+	private McpServerConfig? ConfirmDelete { get; set; }
+	private string? EditingName { get; set; }
+	private string Name { get; set; } = string.Empty;
+	private McpTransport Transport { get; set; } = McpTransport.Stdio;
+	private string Command { get; set; } = string.Empty;
+	private string Arguments { get; set; } = string.Empty;
+	private string Url { get; set; } = string.Empty;
+	private string Cwd { get; set; } = string.Empty;
+	private IReadOnlyDictionary<string, string>? Headers { get; set; }
+	private string ApiKey { get; set; } = string.Empty;
+	private bool ClearApiKey { get; set; }
+	private bool Enabled { get; set; } = true;
+	private bool RequiresApproval { get; set; }
+	private string? Status { get; set; }
+	private bool Busy { get; set; }
+
+	protected override async Task OnInitializedAsync() => Snapshot = await Mcp.GetSnapshotAsync();
+
+	private RenderFragment Editor() => @<div class="provider-editor">
+		<div class="form-grid">
+			<label>Name<input value="@Name" @oninput="eventArgs => Name = eventArgs.Value?.ToString() ?? string.Empty" disabled="@(EditingName != NewServerName)" placeholder="exa" /><small>Namespaces this server's tools. Letters, digits, underscore, hyphen.</small></label>
+			<label>Transport
+				<select value="@Transport" @onchange="eventArgs => Transport = Enum.Parse<McpTransport>(eventArgs.Value?.ToString() ?? nameof(McpTransport.Stdio))">
+					<option value="@McpTransport.Stdio">stdio (launch a process)</option>
+					<option value="@McpTransport.StreamableHttp">HTTP (connect to a URL)</option>
+				</select>
+			</label>
+			@if (Transport == McpTransport.Stdio)
+			{
+				<label>Command<input value="@Command" @oninput="eventArgs => Command = eventArgs.Value?.ToString() ?? string.Empty" placeholder="unity" /></label>
+				<label>Working directory<input value="@Cwd" @oninput="eventArgs => Cwd = eventArgs.Value?.ToString() ?? string.Empty" placeholder="optional" /></label>
+				<label class="full-field">Arguments<textarea rows="3" value="@Arguments" @oninput="eventArgs => Arguments = eventArgs.Value?.ToString() ?? string.Empty" placeholder="one per line"></textarea><small>One argument per line, so a path containing spaces needs no quoting.</small></label>
+			}
+			else
+			{
+				<label class="full-field">URL<input value="@Url" @oninput="eventArgs => Url = eventArgs.Value?.ToString() ?? string.Empty" placeholder="https://mcp.example.com/mcp" /></label>
+			}
+			<label class="full-field">API key<input type="password" autocomplete="off" value="@ApiKey" disabled="@ClearApiKey" @oninput="eventArgs => ApiKey = eventArgs.Value?.ToString() ?? string.Empty" placeholder="@(EditingName == NewServerName ? "Optional" : "Enter to replace, blank to keep")" /><small>Stored protected and never written to mcp.json. Put <code>@McpServerConfig.ApiKeyPlaceholder</code> in the URL, header, or argument to say where it goes; otherwise it is sent as a bearer token.</small></label>
+			@if (EditingName != NewServerName && Snapshot.Servers.FirstOrDefault(server => server.Config.Name == EditingName)?.CredentialConfigured == true)
+			{
+				<label class="checkbox-field"><input type="checkbox" checked="@ClearApiKey" @onchange="eventArgs => ClearApiKey = (bool?)eventArgs.Value ?? false" /> Remove stored API key</label>
+			}
+			<label class="checkbox-field"><input type="checkbox" checked="@Enabled" @onchange="eventArgs => Enabled = (bool?)eventArgs.Value ?? true" /> Enabled</label>
+			<label class="checkbox-field"><input type="checkbox" checked="@RequiresApproval" @onchange="eventArgs => RequiresApproval = (bool?)eventArgs.Value ?? false" /> Ask before every call<small>Each of this server's tool calls is put to you first. Worth it for a server that changes a live project.</small></label>
+		</div>
+		@if (!string.IsNullOrEmpty(Status)) { <p class="editor-error">@Status</p> }
+		<footer class="editor-footer">
+			<button class="secondary-button" @onclick="CancelEdit">Cancel</button>
+			<button class="primary-button" disabled="@Busy" @onclick="SaveAsync">@(Busy ? "Saving..." : EditingName == NewServerName ? "Add server" : "Apply")</button>
+		</footer>
+	</div>;
+
+	private void NewServer(Preset? preset)
+	{
+		EditingName = NewServerName;
+		Status = null;
+		ApiKey = string.Empty;
+		ClearApiKey = false;
+		Headers = null;
+		Enabled = true;
+		Cwd = string.Empty;
+		switch (preset)
+		{
+			case Preset.Exa:
+				// Exa answers without a key at a lower rate limit, so the placeholder sits in the URL
+				// ready for one rather than the endpoint being unusable until a key is supplied.
+				Name = "exa";
+				Transport = McpTransport.StreamableHttp;
+				Url = "https://mcp.exa.ai/mcp";
+				Headers = new Dictionary<string, string> { ["x-api-key"] = McpServerConfig.ApiKeyPlaceholder };
+				Command = string.Empty;
+				Arguments = string.Empty;
+				RequiresApproval = false;
+				break;
+			case Preset.Unity:
+				// The CLI attaches to whichever editor already has this project open.
+				Name = "unity";
+				Transport = McpTransport.Stdio;
+				Command = "unity";
+				Arguments = "mcp\n--project-path\nC:\\Path\\To\\Your\\Unity\\Project";
+				Url = string.Empty;
+				RequiresApproval = true;
+				break;
+			default:
+				Name = string.Empty;
+				Transport = McpTransport.Stdio;
+				Command = string.Empty;
+				Arguments = string.Empty;
+				Url = string.Empty;
+				RequiresApproval = false;
+				break;
+		}
+	}
+
+	private void Edit(McpServerConfig config)
+	{
+		EditingName = config.Name;
+		Name = config.Name;
+		Transport = config.Transport;
+		Command = config.Command ?? string.Empty;
+		Arguments = string.Join('\n', config.Args ?? []);
+		Url = config.Url ?? string.Empty;
+		var legacyExa = config.Name.Equals("exa", StringComparison.OrdinalIgnoreCase)
+			&& Url.Equals($"https://mcp.exa.ai/mcp?exaApiKey={McpServerConfig.ApiKeyPlaceholder}", StringComparison.Ordinal);
+		if (legacyExa) Url = "https://mcp.exa.ai/mcp";
+		Headers = legacyExa
+			? new Dictionary<string, string> { ["x-api-key"] = McpServerConfig.ApiKeyPlaceholder }
+			: config.Headers;
+		Cwd = config.Cwd ?? string.Empty;
+		Enabled = config.Enabled;
+		RequiresApproval = config.RequiresApproval;
+		ApiKey = string.Empty;
+		ClearApiKey = false;
+		Status = null;
+	}
+
+	private void CancelEdit() { EditingName = null; Status = null; }
+
+	private async Task SaveAsync()
+	{
+		Busy = true;
+		Status = null;
+		try
+		{
+			var config = new McpServerConfig(
+				Name.Trim(),
+				Transport,
+				Command: string.IsNullOrWhiteSpace(Command) ? null : Command.Trim(),
+				Args: Arguments.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+				Cwd: string.IsNullOrWhiteSpace(Cwd) ? null : Cwd.Trim(),
+				Url: string.IsNullOrWhiteSpace(Url) ? null : Url.Trim(),
+				Headers: Headers,
+				Enabled: Enabled,
+				RequiresApproval: RequiresApproval);
+
+			// A blank key on an edit means "leave the stored one alone", which is what lets an endpoint
+			// be corrected without retyping a secret this page never shows back.
+			var apiKey = EditingName == NewServerName || ApiKey.Length > 0 ? ApiKey : ClearApiKey ? string.Empty : null;
+			await Mcp.SaveServerAsync(config, apiKey);
+			Snapshot = await Mcp.GetSnapshotAsync();
+			EditingName = null;
+			ApiKey = string.Empty;
+			Status = $"Saved {config.Name}. Reconnecting...";
+		}
+		catch (Exception exception) { Status = exception.Message; }
+		finally { Busy = false; }
+	}
+
+	private async Task DeleteAsync()
+	{
+		if (ConfirmDelete is null) return;
+		await Mcp.DeleteServerAsync(ConfirmDelete.Name);
+		ConfirmDelete = null;
+		EditingName = null;
+		Snapshot = await Mcp.GetSnapshotAsync();
+	}
+}

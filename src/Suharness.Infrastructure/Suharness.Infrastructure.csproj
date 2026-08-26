@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Suharness.Abstractions\Suharness.Abstractions.csproj" />
+    <ProjectReference Include="..\Suharness.Core\Suharness.Core.csproj" />
+    <ProjectReference Include="..\Suharness.Tools\Suharness.Tools.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.17.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.9.0" />
+    <PackageReference Include="ModelContextProtocol" Version="2.1.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The snapshot store's gitignore escaping is internal, but getting it wrong turns one skipped
+         file into a skipped pattern, so it is worth testing directly. -->
+    <InternalsVisibleTo Include="Suharness.Core.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,30 @@
+<Project>
+
+  <!--
+    Shared metadata for every project in the solution.
+
+    The version lives here rather than in each .csproj, and the CLI reads it back
+    off its own assembly rather than repeating it in a string literal, so a release
+    is a one-line change in one file.
+  -->
+
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Authors>Suhas Rao</Authors>
+    <Company>Suhas Rao</Company>
+    <Product>SuHarness</Product>
+    <Copyright>Copyright 2026 Suhas Rao</Copyright>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/suhasaraos/SuHarness</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/suhasaraos/SuHarness</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Keep the tree warning-clean; CI builds with -warnaserror. -->
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+</Project>

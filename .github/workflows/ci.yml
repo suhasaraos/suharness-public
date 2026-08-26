@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # SuHarness is developed on Windows but is not Windows-only, and the
+        # credential store behaves differently on each. Both are built so a
+        # change cannot silently break the platform its author does not use.
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore Suharness.slnx
+
+      - name: Build
+        # Warnings are errors in CI. The tree builds clean today, and this is
+        # what keeps it that way.
+        run: dotnet build Suharness.slnx --configuration Release --no-restore -warnaserror
+
+      - name: Test
+        run: >
+          dotnet test tests/Suharness.Core.Tests/Suharness.Core.Tests.csproj
+          --configuration Release
+          --no-build
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory ${{ runner.temp }}/test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: ${{ runner.temp }}/test-results
+          if-no-files-found: ignore
+
+  format:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore Suharness.slnx
+
+      - name: Verify formatting matches .editorconfig
+        run: dotnet format Suharness.slnx --verify-no-changes --no-restore
+
+  vulnerable-packages:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore Suharness.slnx
+
+      - name: Fail on vulnerable packages
+        # `dotnet list package` exits 0 whether or not it finds anything, so the
+        # output has to be inspected rather than the exit code trusted.
+        run: |
+          dotnet list Suharness.slnx package --vulnerable --include-transitive 2>&1 | tee audit.log
+          if grep -qiE '^\s*>\s' audit.log; then
+            echo "::error::Vulnerable packages found — see the log above."
+            exit 1
+          fi
+          echo "No vulnerable packages."

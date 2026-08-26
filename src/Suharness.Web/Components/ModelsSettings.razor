@@ -1,0 +1,448 @@
+@using System.Globalization
+@inject IModelConfigurationService Models
+@inject IWorkspaceAgentStateStore WorkspaceAgentState
+
+@if (Open)
+{
+	<div class="modal-backdrop" @onclick="CloseAsync">
+		<section class="settings-modal" role="dialog" aria-label="Settings" @onclick:stopPropagation="true">
+			<nav class="settings-nav">
+				<strong>Settings</strong>
+				<button class="settings-nav-item @(Section == "models" ? "active" : null)" @onclick='() => Section = "models"'><span>&#9673;</span> Models</button>
+				<button class="settings-nav-item @(Section == "mcp" ? "active" : null)" @onclick='() => Section = "mcp"'><span>&#9881;</span> MCP servers</button>
+				<button class="settings-nav-item @(Section == "workspace" ? "active" : null)" @onclick="OpenWorkspaceAgentAsync"><span>&#9638;</span> .suharness</button>
+			</nav>
+			<div class="settings-content">
+			@if (Section == "workspace")
+			{
+				<header class="settings-heading">
+					<div><h2>.suharness</h2><p>Workspace instructions, skills, generated repository context, and session projections.</p></div>
+					<button class="icon-button" title="Close settings" @onclick="CloseAsync">x</button>
+				</header>
+				@if (AgentStatus is null)
+				{
+					<p class="settings-status">@(string.IsNullOrWhiteSpace(WorkspaceRoot) ? "Select a workspace to configure .suharness." : "Loading workspace state...")</p>
+				}
+				else
+				{
+					<div class="workspace-agent-status">
+						<dl>
+							<dt>Root</dt><dd><code>@AgentStatus.Root</code></dd>
+							<dt>Instructions</dt><dd>@(AgentStatus.InstructionsPath ?? "Not configured")</dd>
+							<dt>Skills</dt><dd>@AgentStatus.SkillCount</dd>
+							<dt>Metadata</dt><dd>@(AgentStatus.MetadataGeneratedAt?.ToLocalTime().ToString("g") ?? "Not generated")</dd>
+							<dt>Knowledge notes</dt><dd>@AgentStatus.KnowledgeNoteCount</dd>
+							<dt>Session projections</dt><dd>@AgentStatus.SessionCount</dd>
+						</dl>
+						@if (AgentStatus.Warnings.Count > 0)
+						{
+							<div class="workspace-agent-warnings">@foreach (var warning in AgentStatus.Warnings) { <p>@warning</p> }</div>
+						}
+						<p class="editor-hint">Create <code>.suharness/instructions.md</code> for workspace-specific guidance and place reusable bundles under <code>.suharness/skills/</code>. Generated state is ignored by the workspace's nested .gitignore.</p>
+						<div class="workspace-agent-actions">
+							<button class="secondary-button" disabled="@AgentBusy" @onclick="RegenerateWorkspaceAgentAsync">Regenerate metadata</button>
+							<button class="secondary-button" disabled="@AgentBusy" @onclick="ImportSuAgentAsync">Import .suagent</button>
+						</div>
+						@if (!string.IsNullOrWhiteSpace(AgentMessage)) { <p class="settings-status" role="status">@AgentMessage</p> }
+					</div>
+				}
+			}
+			else if (Section == "mcp")
+			{
+				<McpSettings OnClose="CloseAsync" />
+			}
+			else
+			{
+				<header class="settings-heading">
+					<div><h2>Models</h2><p>Add provider routes and write-only credentials. Changes apply to the next request.</p></div>
+					<button class="icon-button" title="Close settings" @onclick="CloseAsync">x</button>
+				</header>
+
+				@if (!string.IsNullOrEmpty(Status)) { <p class="settings-status" role="status">@Status</p> }
+				<ul class="provider-list">
+					@foreach (var provider in Snapshot.Providers)
+					{
+						<li>
+							<div class="provider-summary">
+								<span class="credential-dot @(provider.CredentialConfigured ? "configured" : "missing")" title="@(provider.CredentialConfigured ? "API key configured" : "API key missing or using native authentication")"></span>
+								<div><strong>@provider.Profile.DisplayName</strong><small>@provider.Profile.Id &middot; @provider.Profile.Models.Count model(s)</small></div>
+								<button class="secondary-button" @onclick="() => Edit(provider.Profile)">Edit</button>
+								<button class="danger-button" @onclick="() => ConfirmDelete = provider.Profile">Delete</button>
+							</div>
+							@if (EditingId == provider.Profile.Id) { @Editor() }
+						</li>
+					}
+				</ul>
+
+				@if (EditingId == NewProviderId) { @Editor() }
+				else { <button class="add-provider-button" @onclick="NewProvider"><span>+</span> Add custom provider</button> }
+			}
+			</div>
+		</section>
+	</div>
+}
+
+@if (ConfirmDelete is not null)
+{
+	<div class="modal-backdrop confirm-layer">
+		<section class="confirm-dialog" role="alertdialog" aria-label="Delete provider">
+			<h3>Delete @ConfirmDelete.DisplayName?</h3>
+			<p>This removes its profile and the API key stored by this page. Existing transcript events are retained.</p>
+			<div><button class="secondary-button" @onclick="() => ConfirmDelete = null">Cancel</button><button class="danger-button solid" @onclick="DeleteAsync">Delete provider</button></div>
+		</section>
+	</div>
+}
+
+@code {
+	private const string NewProviderId = "__new__";
+	[Parameter] public bool Open { get; set; }
+	[Parameter] public string InitialSection { get; set; } = "models";
+	[Parameter] public string? WorkspaceRoot { get; set; }
+	[Parameter] public EventCallback OnClose { get; set; }
+	[Parameter] public EventCallback OnChanged { get; set; }
+
+	/// <summary>Which settings panel is showing. The modal owns the nav; each panel owns its own state.</summary>
+	private string Section { get; set; } = "models";
+
+	private ModelConfigurationSnapshot Snapshot { get; set; } = new([], null);
+	private string? EditingId { get; set; }
+	private static readonly string DefaultIdleTimeoutSeconds =
+		((int)ModelProviderProfile.DefaultIdleTimeout.TotalSeconds).ToString();
+
+	private static readonly string DefaultInlineToolBytes =
+		ModelProviderProfile.DefaultMaxInlineToolBytes.ToString();
+	private static readonly string DefaultToolIterations =
+		ModelProviderProfile.DefaultMaxToolIterationsPerTurn.ToString();
+	private static readonly string DefaultSegmentIterations =
+		ModelProviderProfile.DefaultMaxToolIterationsPerSegment.ToString();
+
+	private ModelProviderProfile? ConfirmDelete { get; set; }
+	private string RouteId { get; set; } = string.Empty;
+	private string DisplayName { get; set; } = string.Empty;
+	private string BaseUrl { get; set; } = string.Empty;
+	private string ApiKey { get; set; } = string.Empty;
+	private bool ClearApiKey { get; set; }
+	private string IdleTimeout { get; set; } = string.Empty;
+	private string InlineToolBytes { get; set; } = string.Empty;
+	private string ToolIterations { get; set; } = string.Empty;
+	private string SegmentIterations { get; set; } = string.Empty;
+	private bool AutoContinueUnfinishedTurns { get; set; }
+	private string SamplingTemperature { get; set; } = string.Empty;
+	private string SamplingTopP { get; set; } = string.Empty;
+	private string SamplingTopK { get; set; } = string.Empty;
+	private List<ModelRow> ModelRows { get; set; } = [];
+	private string? Status { get; set; }
+	private bool Busy { get; set; }
+	private bool WasOpen { get; set; }
+	private WorkspaceAgentStatus? AgentStatus { get; set; }
+	private bool AgentBusy { get; set; }
+	private string? AgentMessage { get; set; }
+
+	protected override async Task OnParametersSetAsync()
+	{
+		if (Open && !WasOpen) Section = InitialSection is "mcp" or "workspace" ? InitialSection : "models";
+		if (Open) Snapshot = await Models.GetSnapshotAsync();
+		if (Open && Section == "workspace") await LoadWorkspaceAgentAsync();
+		WasOpen = Open;
+	}
+
+	private async Task OpenWorkspaceAgentAsync()
+	{
+		Section = "workspace";
+		await LoadWorkspaceAgentAsync();
+	}
+
+	private async Task LoadWorkspaceAgentAsync()
+	{
+		AgentMessage = null;
+		AgentStatus = string.IsNullOrWhiteSpace(WorkspaceRoot)
+			? null
+			: await WorkspaceAgentState.GetStatusAsync(WorkspaceRoot);
+	}
+
+	private async Task RegenerateWorkspaceAgentAsync()
+	{
+		if (string.IsNullOrWhiteSpace(WorkspaceRoot)) return;
+		AgentBusy = true;
+		try
+		{
+			await WorkspaceAgentState.ProjectRepositoryAsync(WorkspaceRoot);
+			AgentStatus = await WorkspaceAgentState.GetStatusAsync(WorkspaceRoot);
+			AgentMessage = "Repository metadata regenerated.";
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+		{
+			AgentMessage = exception.Message;
+		}
+		finally { AgentBusy = false; }
+	}
+
+	private async Task ImportSuAgentAsync()
+	{
+		if (string.IsNullOrWhiteSpace(WorkspaceRoot)) return;
+		AgentBusy = true;
+		try
+		{
+			var imported = await WorkspaceAgentState.ImportSuAgentAsync(WorkspaceRoot);
+			await WorkspaceAgentState.ProjectRepositoryAsync(WorkspaceRoot);
+			AgentStatus = await WorkspaceAgentState.GetStatusAsync(WorkspaceRoot);
+			AgentMessage = $"Imported instructions: {imported.ImportedInstructions}; skills: {imported.ImportedSkills}; knowledge notes: {imported.ImportedKnowledgeNotes}; sessions: {imported.ImportedSessions}."
+				+ (imported.Warnings.Count == 0 ? string.Empty : " " + string.Join(" ", imported.Warnings));
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+		{
+			AgentMessage = exception.Message;
+		}
+		finally { AgentBusy = false; }
+	}
+
+	private RenderFragment Editor() => @<div class="provider-editor">
+		<div class="form-grid">
+			<label>Provider ID<input value="@RouteId" @oninput="eventArgs => RouteId = eventArgs.Value?.ToString() ?? string.Empty" disabled="@(EditingId != NewProviderId)" placeholder="acme-gateway" /></label>
+			<label>Display name<input value="@DisplayName" @oninput="eventArgs => DisplayName = eventArgs.Value?.ToString() ?? string.Empty" placeholder="Acme Gateway" /></label>
+			<label class="full-field">Base URL<input value="@BaseUrl" @oninput="eventArgs => BaseUrl = eventArgs.Value?.ToString() ?? string.Empty" placeholder="https://gateway.example/v1" /></label>
+			<label>API protocol<select disabled><option>OpenAI Chat Completions</option></select></label>
+			<label>API key<input type="password" autocomplete="off" value="@ApiKey" disabled="@ClearApiKey" @oninput="eventArgs => ApiKey = eventArgs.Value?.ToString() ?? string.Empty" placeholder="Enter to add or replace" /></label>
+			@if (EditingId != NewProviderId && Snapshot.Providers.FirstOrDefault(provider => provider.Profile.Id == EditingId)?.CredentialConfigured == true)
+			{
+				<label class="checkbox-field"><input type="checkbox" checked="@ClearApiKey" @onchange="eventArgs => ClearApiKey = (bool?)eventArgs.Value ?? false" /> Remove stored API key</label>
+			}
+			<label class="full-field">Idle timeout (seconds)<input type="number" min="1" value="@IdleTimeout" @oninput="eventArgs => IdleTimeout = eventArgs.Value?.ToString() ?? string.Empty" placeholder="@DefaultIdleTimeoutSeconds" /><small>How long a request may go without producing output before it is abandoned. This bounds silence, not the length of an answer, so raise it for a local model that pauses on prompt processing before its first token.</small></label>
+			<label class="full-field">Tool result cap (bytes)<input type="number" min="1" value="@InlineToolBytes" @oninput="eventArgs => InlineToolBytes = eventArgs.Value?.ToString() ?? string.Empty" placeholder="@DefaultInlineToolBytes" /><small>A tool result larger than this is saved to a file and replaced with a preview plus its path, which the model can read back on demand. Lower it for a model whose usable context is small.</small></label>
+			<label class="full-field">Model round-trips per turn<input type="number" min="1" value="@ToolIterations" @oninput="eventArgs => ToolIterations = eventArgs.Value?.ToString() ?? string.Empty" placeholder="@DefaultToolIterations" /><small>The maximum number of model requests one turn may use while calling tools. The final request has no tools available, so raise this for long autonomous tasks.</small></label>
+			<label class="full-field">Round-trips per progress segment<input type="number" min="2" value="@SegmentIterations" @oninput="eventArgs => SegmentIterations = eventArgs.Value?.ToString() ?? string.Empty" placeholder="@DefaultSegmentIterations" /><small>SuHarness checkpoints progress after this many model requests. Productive work can continue up to the turn-wide cap; stalled work stops here instead of consuming the remaining budget.</small></label>
+			<label>Temperature<input type="number" min="0" max="2" step="0.01" value="@SamplingTemperature" @oninput="eventArgs => SamplingTemperature = eventArgs.Value?.ToString() ?? string.Empty" placeholder="Provider default" /></label>
+			<label>Top P<input type="number" min="0.01" max="1" step="0.01" value="@SamplingTopP" @oninput="eventArgs => SamplingTopP = eventArgs.Value?.ToString() ?? string.Empty" placeholder="Provider default" /></label>
+			<label>Top K<input type="number" min="1" step="1" value="@SamplingTopK" @oninput="eventArgs => SamplingTopK = eventArgs.Value?.ToString() ?? string.Empty" placeholder="Provider default" /></label>
+			<label class="checkbox-field"><input type="checkbox" checked="@AutoContinueUnfinishedTurns" @onchange="eventArgs => AutoContinueUnfinishedTurns = (bool?)eventArgs.Value ?? false" /> Automatically continue one unfinished turn</label>
+		</div>
+		<div class="catalog-heading"><div><strong>Model catalog</strong><small>Check the models to save. At least one is required.</small></div><div class="catalog-actions"><label class="select-all-models"><input type="checkbox" checked="@AllModelsSelected" disabled="@(ModelRows.Count == 0)" @onchange="ToggleAllModels" /> @(AllModelsSelected ? "Unselect all" : "Select all")</label><button class="secondary-button" disabled="@Busy" @onclick="DiscoverAsync">Fetch available models</button></div></div>
+		<div class="model-editor-list">
+			<div class="model-editor-head" aria-hidden="true">
+				<span></span><span>Model ID</span><span>Display name</span><span>Context</span><span>Max output</span><span>Effort</span>
+				<span>Input $/1M</span><span>Output $/1M</span><span>Cached in $/1M</span><span></span>
+			</div>
+			@foreach (var row in ModelRows)
+			{
+				<div class="model-editor-row" @key="row.Key">
+					<input class="model-select" aria-label="Select @row.Name" type="checkbox" @bind="row.Selected" />
+					<input class="model-id-input" aria-label="Model ID" title="@row.Id" @bind="row.Id" placeholder="model-id" />
+					<input class="model-name-input" aria-label="Display name" title="@row.Name" @bind="row.Name" placeholder="Display name" />
+					<input aria-label="Context window in tokens" type="number" min="1" @bind="row.ContextWindow" placeholder="@UsageFormat.Unknown" title="Usable context window in tokens. Compaction condenses earlier conversation once the transcript passes 80% of this; leave blank to turn compaction off for this model." />
+					<input aria-label="Maximum output tokens" type="number" min="1" @bind="row.MaxOutputTokens" placeholder="Provider" title="Maximum tokens the model may generate in one response. Leave blank to use the provider default." />
+					<select aria-label="Reasoning effort" @bind="row.ReasoningEffort" title="How much internal reasoning to request before the model answers. Leave as Default to send no reasoning parameter at all, which is what a model or endpoint that does not support one requires. A session can override this from the model picker.">
+						<option value="">Default</option>
+						@foreach (var level in Enum.GetValues<ReasoningEffortLevel>())
+						{
+							<option value="@level">@level</option>
+						}
+					</select>
+					<input aria-label="Input cost in USD per million tokens" type="number" min="0" step="any" @bind="row.InputCost" placeholder="@UsageFormat.Unknown" title="@PricingHint(row, PromptRate)" />
+					<input aria-label="Output cost in USD per million tokens" type="number" min="0" step="any" @bind="row.OutputCost" placeholder="@UsageFormat.Unknown" title="@PricingHint(row, CompletionRate)" />
+					<input aria-label="Cached input cost in USD per million tokens" type="number" min="0" step="any" @bind="row.CachedInputCost" placeholder="@UsageFormat.Unknown" title="@PricingHint(row, CachedRate)" />
+					<button class="icon-button" title="Remove model" @onclick="() => ModelRows.Remove(row)">x</button>
+				</div>
+			}
+		</div>
+		<p class="editor-hint">Pricing and context are optional. A blank field stays unknown rather than free, and a model
+		with neither still works — only its cost estimates are unavailable. Fetching models fills blanks only; values
+		entered here are never overwritten by a later fetch.</p>
+		<button class="text-button" @onclick="AddModel">+ Add model</button>
+		@if (!string.IsNullOrEmpty(Status)) { <p class="editor-error">@Status</p> }
+		<footer class="editor-footer"><button class="secondary-button" @onclick="CancelEdit">Cancel</button><button class="primary-button" disabled="@Busy" @onclick="SaveAsync">@(Busy ? "Saving..." : EditingId == NewProviderId ? "Create provider" : "Apply")</button></footer>
+	</div>;
+
+	private void NewProvider()
+	{
+		EditingId = NewProviderId; RouteId = string.Empty; DisplayName = string.Empty; BaseUrl = string.Empty; ApiKey = string.Empty; ClearApiKey = false; IdleTimeout = string.Empty; InlineToolBytes = string.Empty; ToolIterations = string.Empty; SegmentIterations = string.Empty; AutoContinueUnfinishedTurns = false; SamplingTemperature = string.Empty; SamplingTopP = string.Empty; SamplingTopK = string.Empty; ModelRows = []; Status = null;
+	}
+
+	private void Edit(ModelProviderProfile profile)
+	{
+		EditingId = profile.Id; RouteId = profile.Id; DisplayName = profile.DisplayName; BaseUrl = profile.BaseUrl; ApiKey = string.Empty;
+		ClearApiKey = false;
+		IdleTimeout = profile.IdleTimeoutSeconds?.ToString() ?? string.Empty;
+		InlineToolBytes = profile.MaxInlineToolBytes?.ToString() ?? string.Empty;
+		ToolIterations = profile.MaxToolIterationsPerTurn?.ToString() ?? string.Empty;
+		SegmentIterations = profile.MaxToolIterationsPerSegment?.ToString() ?? string.Empty;
+		AutoContinueUnfinishedTurns = profile.AutoContinueUnfinishedTurns;
+		SamplingTemperature = profile.Temperature?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+		SamplingTopP = profile.TopP?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+		SamplingTopK = profile.TopK?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+		ModelRows = profile.Models.Select(model => new ModelRow(model)).ToList(); Status = null;
+	}
+
+	private bool AllModelsSelected => ModelRows.Count > 0 && ModelRows.All(row => row.Selected);
+	private void ToggleAllModels(ChangeEventArgs eventArgs)
+	{
+		var selected = eventArgs.Value is true;
+		foreach (var row in ModelRows) row.Selected = selected;
+	}
+	private void AddModel() => ModelRows.Add(new(new ModelDescriptor(string.Empty, string.Empty)));
+
+	private const string PromptRate = "prompt";
+	private const string CompletionRate = "completion";
+	private const string CachedRate = "cached prompt";
+
+	/// <summary>What a pricing field means and, when it was imported, where the number came from.</summary>
+	private static string PricingHint(ModelRow row, string kind)
+	{
+		var hint = $"USD per million {kind} tokens. Leave blank when the rate is unknown; 0 means genuinely free.";
+		return row.Baseline switch
+		{
+			{ PricingSource: { } source, PricingFetchedAt: { } fetched } =>
+				$"{hint} Imported from {source} on {fetched.ToLocalTime():MMM d, yyyy}.",
+			{ PricingSource: { } source } => $"{hint} Source: {source}.",
+			_ => hint,
+		};
+	}
+	private void CancelEdit() { EditingId = null; Status = null; }
+
+	private async Task SaveAsync()
+	{
+		Busy = true; Status = null;
+		try
+		{
+			var profile = Draft();
+			var apiKey = ApiKey.Length > 0 ? ApiKey : ClearApiKey ? string.Empty : null;
+			await Models.SaveProviderAsync(profile, apiKey);
+			Snapshot = await Models.GetSnapshotAsync(); EditingId = null; ApiKey = string.Empty; Status = $"Saved {profile.DisplayName}.";
+			await OnChanged.InvokeAsync();
+		}
+		catch (Exception exception) { Status = exception.Message; }
+		finally { Busy = false; }
+	}
+
+	private async Task DiscoverAsync()
+	{
+		Busy = true; Status = null;
+		try
+		{
+			var discovered = await Models.DiscoverModelsAsync(Draft(allowEmptyModels: true), string.IsNullOrWhiteSpace(ApiKey) ? null : ApiKey);
+			foreach (var model in discovered)
+			{
+				var existing = ModelRows.FirstOrDefault(row => string.Equals(row.Id, model.Id, StringComparison.Ordinal));
+				// A refresh may only fill in what is unknown. Someone who corrected a rate by hand — or
+				// typed one for a local model that publishes none — keeps it, which is the difference
+				// between refreshing a catalog and having it overwrite the configuration.
+				if (existing is null) ModelRows.Add(new ModelRow(model, selected: false));
+				else existing.Apply(existing.ToDescriptor().FillGapsFrom(model));
+			}
+			Status = discovered.Count == 0 ? "The endpoint returned no models." : $"Found {discovered.Count} model(s).";
+		}
+		catch (Exception exception) { Status = exception.Message; }
+		finally { Busy = false; }
+	}
+
+	private ModelProviderProfile Draft(bool allowEmptyModels = false)
+	{
+		var models = ModelRows.Where(row => row.Selected).Select(row => row.ToDescriptor()).ToArray();
+		if (allowEmptyModels && models.Length == 0) models = [new ModelDescriptor("discovery-probe", "discovery-probe")];
+		// A blank field means "use the default", so it is stored as null rather than as a number.
+		var idleSeconds = int.TryParse(IdleTimeout.Trim(), out var parsed) && parsed > 0 ? parsed : (int?)null;
+		var inlineBytes = int.TryParse(InlineToolBytes.Trim(), out var bytes) && bytes > 0 ? bytes : (int?)null;
+		var toolIterations = int.TryParse(ToolIterations.Trim(), out var iterations) && iterations > 0 ? iterations : (int?)null;
+		var segmentIterations = int.TryParse(SegmentIterations.Trim(), out var segment) && segment > 1 ? segment : (int?)null;
+		var temperature = float.TryParse(SamplingTemperature.Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsedTemperature) ? parsedTemperature : (float?)null;
+		var topP = float.TryParse(SamplingTopP.Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsedTopP) ? parsedTopP : (float?)null;
+		var topK = int.TryParse(SamplingTopK.Trim(), out var parsedTopK) ? parsedTopK : (int?)null;
+		return new(
+			RouteId.Trim(), DisplayName.Trim(), BaseUrl.Trim(), ModelProtocol.OpenAIChatCompletions, models,
+			idleSeconds, inlineBytes, MaxToolIterationsPerTurn: toolIterations,
+			AutoContinueUnfinishedTurns: AutoContinueUnfinishedTurns,
+			Temperature: temperature, TopP: topP, TopK: topK,
+			MaxToolIterationsPerSegment: segmentIterations);
+	}
+
+	private async Task DeleteAsync()
+	{
+		if (ConfirmDelete is null) return;
+		await Models.DeleteProviderAsync(ConfirmDelete.Id); ConfirmDelete = null; Snapshot = await Models.GetSnapshotAsync(); EditingId = null;
+		await OnChanged.InvokeAsync();
+	}
+
+	private async Task CloseAsync() { EditingId = null; ConfirmDelete = null; Status = null; await OnClose.InvokeAsync(); }
+
+	/// <summary>
+	/// One editable row of the model catalog. Every metadata field is held as text so that blank can
+	/// mean unknown: a numeric zero would read as "free", which is a different and much louder claim.
+	/// </summary>
+	private sealed class ModelRow
+	{
+		public ModelRow(ModelDescriptor descriptor, bool selected = true)
+		{
+			Selected = selected;
+			Apply(descriptor);
+		}
+
+		public Guid Key { get; } = Guid.NewGuid();
+		public string Id { get; set; } = string.Empty;
+		public string Name { get; set; } = string.Empty;
+		public bool Selected { get; set; }
+
+		/// <summary>Blank means unset, which leaves compaction off for this model.</summary>
+		public string ContextWindow { get; set; } = string.Empty;
+		public string MaxOutputTokens { get; set; } = string.Empty;
+
+		/// <summary>Null means no reasoning parameter is sent, rather than a level of "none".</summary>
+		public ReasoningEffortLevel? ReasoningEffort { get; set; }
+
+		public string InputCost { get; set; } = string.Empty;
+		public string OutputCost { get; set; } = string.Empty;
+		public string CachedInputCost { get; set; } = string.Empty;
+
+		/// <summary>
+		/// The descriptor this row was last loaded or refreshed from. It is what tells an edit apart
+		/// from an import, so a rate someone typed is recorded as theirs rather than as the provider's.
+		/// </summary>
+		public ModelDescriptor? Baseline { get; private set; }
+
+		public void Apply(ModelDescriptor descriptor)
+		{
+			Baseline = descriptor;
+			Id = descriptor.Id;
+			Name = descriptor.Name;
+			ContextWindow = Text(descriptor.ContextWindow);
+			MaxOutputTokens = Text(descriptor.MaxOutputTokens);
+			ReasoningEffort = descriptor.ReasoningEffort;
+			InputCost = Text(descriptor.InputCostPerMillion);
+			OutputCost = Text(descriptor.OutputCostPerMillion);
+			CachedInputCost = Text(descriptor.CachedInputCostPerMillion);
+		}
+
+		public ModelDescriptor ToDescriptor()
+		{
+			var input = Number(InputCost);
+			var output = Number(OutputCost);
+			var cached = Number(CachedInputCost);
+			var edited = Baseline is null
+				? input is not null || output is not null || cached is not null
+				: input != Baseline.InputCostPerMillion
+					|| output != Baseline.OutputCostPerMillion
+					|| cached != Baseline.CachedInputCostPerMillion;
+
+			return new ModelDescriptor(
+				Id.Trim(),
+				string.IsNullOrWhiteSpace(Name) ? Id.Trim() : Name.Trim(),
+				ContextWindow: Whole(ContextWindow),
+				MaxOutputTokens: Whole(MaxOutputTokens),
+				InputCostPerMillion: input,
+				OutputCostPerMillion: output,
+				CachedInputCostPerMillion: cached,
+				PricingSource: edited ? ModelDescriptor.ManualPricingSource : Baseline?.PricingSource,
+				PricingFetchedAt: edited ? null : Baseline?.PricingFetchedAt,
+				ReasoningEffort: ReasoningEffort);
+		}
+
+		private static string Text(int? value) => value?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+
+		private static string Text(decimal? value) => value?.ToString("0.############", CultureInfo.InvariantCulture) ?? string.Empty;
+
+		private static int? Whole(string text) =>
+			int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) && value > 0 ? value : null;
+
+		/// <summary>A rate, where blank stays unknown and a negative value is rejected as meaningless.</summary>
+		private static decimal? Number(string text) =>
+			decimal.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && value >= 0 ? value : null;
+	}
+}

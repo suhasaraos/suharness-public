@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="ModelContextProtocol" Version="2.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Suharness.Abstractions\Suharness.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Suharness.Core\Suharness.Core.csproj" />
+    <ProjectReference Include="..\..\src\Suharness.Infrastructure\Suharness.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Suharness.Tools\Suharness.Tools.csproj" />
+    <!-- Markdown sanitisation is a security boundary, so it is tested directly rather than only
+         through the component that renders it. -->
+    <ProjectReference Include="..\..\src\Suharness.Web\Suharness.Web.csproj" />
+  </ItemGroup>
+
+</Project>

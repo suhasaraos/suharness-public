@@ -1,0 +1,5 @@
+<div class="message-content markdown-content">@((MarkupString)SafeMarkdown.ToHtml(Content))</div>
+
+@code {
+	[Parameter, EditorRequired] public string Content { get; set; } = string.Empty;
+}

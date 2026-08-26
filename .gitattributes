@@ -1,0 +1,41 @@
+# Normalise line endings so a checkout on Linux/macOS does not rewrite every file.
+# Git stores LF; working-tree endings are chosen per-platform by core.autocrlf.
+* text=auto
+
+# Source and config: always LF in the repository.
+*.cs        text eol=lf diff=csharp
+*.razor     text eol=lf
+*.csproj    text eol=lf
+*.slnx      text eol=lf
+*.props     text eol=lf
+*.targets   text eol=lf
+*.json      text eol=lf
+*.js        text eol=lf
+*.css       text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.sh        text eol=lf
+*.editorconfig text eol=lf
+.gitattributes text eol=lf
+.gitignore  text eol=lf
+
+# Windows batch files must keep CRLF or cmd.exe mis-parses them.
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# Binary: never touch.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.webp      binary
+*.ico       binary
+*.woff      binary
+*.woff2     binary
+*.bin       binary
+*.dll       binary
+*.exe       binary
+
+# Keep generated/vendored files out of language stats and diffs.
+*.min.js    linguist-generated=true

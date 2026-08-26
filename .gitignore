@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+TestResults/
+benchmark-results/
+
+# SuHarness runtime home (default, and any SUHARNESS_HOME used by e2e runs)
+.suharness/
+.e2e-*/

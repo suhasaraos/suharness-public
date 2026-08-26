@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Suharness.Abstractions/Suharness.Abstractions.csproj" />
+    <Project Path="src/Suharness.Cli/Suharness.Cli.csproj" />
+    <Project Path="src/Suharness.Core/Suharness.Core.csproj" />
+    <Project Path="src/Suharness.Infrastructure/Suharness.Infrastructure.csproj" />
+    <Project Path="src/Suharness.Tools/Suharness.Tools.csproj" />
+    <Project Path="src/Suharness.Web/Suharness.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Suharness.Core.Tests/Suharness.Core.Tests.csproj" />
+  </Folder>
+</Solution>

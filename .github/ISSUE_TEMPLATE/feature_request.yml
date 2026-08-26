@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest a capability or change.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        SuHarness is self-extensible: many capabilities can be added by opening
+        this repository as a workspace and asking SuHarness to build them. If
+        that is what you want, you may not need an issue at all — see
+        "Extending SuHarness" in the README.
+
+        Use this template for changes that belong in the project itself.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that is awkward or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be willing to open a pull request for this.

@@ -1,0 +1,89 @@
+@inject IWorkspaceService WorkspaceService
+
+@if (Open)
+{
+	<div class="modal-backdrop" @onclick="CloseAsync">
+		<section class="workspace-dialog" role="dialog" aria-label="Choose workspace" @onclick:stopPropagation="true">
+			<header class="settings-heading"><div><h2>Choose workspace</h2><p>Select a registered project or add another directory.</p></div><button class="icon-button" title="Close workspace picker" @onclick="CloseAsync">x</button></header>
+			<div class="workspace-dialog-body">
+				<div class="registered-workspaces">
+					<div class="dialog-section-title">Workspaces</div>
+					<div class="registered-workspace no-workspace-option @(SelectedId is null ? "selected" : null)">
+						<button @onclick="SelectNoneAsync"><span class="workspace-icon">&#9675;</span><span><strong>No workspace</strong><small>General chat</small></span></button>
+					</div>
+					@if (Workspaces.Count == 0) { <p class="empty-list">No workspaces registered.</p> }
+					@foreach (var workspace in Workspaces)
+					{
+						<div class="registered-workspace @(SelectedId == workspace.Id ? "selected" : null)">
+							<button @onclick="() => SelectAsync(workspace)"><span class="workspace-icon">&lt;/&gt;</span><span><strong>@workspace.Title</strong><small>@workspace.Path</small></span></button>
+							<button class="icon-button" title="Remove workspace" @onclick="() => RemoveAsync(workspace)">x</button>
+						</div>
+					}
+				</div>
+				<div class="directory-browser">
+					<div class="dialog-section-title">Add a directory</div>
+					<div class="browser-path"><button class="icon-button" title="Drives" @onclick="() => BrowseAsync(null)">&#8962;</button>@if (Listing.ParentPath is not null) { <button class="icon-button" title="Parent directory" @onclick="() => BrowseAsync(Listing.ParentPath)">&uarr;</button> }<span>@(Listing.CurrentPath ?? "Computer")</span></div>
+					<div class="directory-list">
+						@foreach (var entry in Listing.Entries)
+						{
+							<button @onclick="() => BrowseAsync(entry.Path)"><span class="folder-icon"></span><span>@entry.Name</span><small>@entry.Path</small></button>
+						}
+					</div>
+					@if (!string.IsNullOrEmpty(Error)) { <p class="editor-error">@Error</p> }
+					<footer class="editor-footer"><button class="secondary-button" @onclick="CloseAsync">Cancel</button><button class="primary-button" disabled="@(Listing.CurrentPath is null)" @onclick="AddCurrentAsync">Add this directory</button></footer>
+				</div>
+			</div>
+		</section>
+	</div>
+}
+
+@code {
+	[Parameter] public bool Open { get; set; }
+	[Parameter] public Guid? SelectedId { get; set; }
+	[Parameter] public EventCallback<HarnessWorkspace> OnSelect { get; set; }
+	[Parameter] public EventCallback OnSelectNone { get; set; }
+	[Parameter] public EventCallback<Guid> OnRemoved { get; set; }
+	[Parameter] public EventCallback OnClose { get; set; }
+	private IReadOnlyList<HarnessWorkspace> Workspaces { get; set; } = [];
+	private DirectoryListing Listing { get; set; } = new(null, null, []);
+	private string? Error { get; set; }
+	private bool WasOpen { get; set; }
+
+	protected override async Task OnParametersSetAsync()
+	{
+		if (Open && !WasOpen)
+		{
+			Workspaces = await WorkspaceService.ListAsync();
+			await BrowseAsync(null);
+		}
+		WasOpen = Open;
+	}
+
+	private async Task BrowseAsync(string? path)
+	{
+		try { Listing = await WorkspaceService.BrowseAsync(path); Error = null; }
+		catch (Exception exception) { Error = exception.Message; }
+	}
+
+	private async Task AddCurrentAsync()
+	{
+		if (Listing.CurrentPath is null) return;
+		try
+		{
+			var workspace = await WorkspaceService.AddAsync(Listing.CurrentPath);
+			Workspaces = await WorkspaceService.ListAsync();
+			await OnSelect.InvokeAsync(workspace);
+		}
+		catch (Exception exception) { Error = exception.Message; }
+	}
+
+	private Task SelectAsync(HarnessWorkspace workspace) => OnSelect.InvokeAsync(workspace);
+	private Task SelectNoneAsync() => OnSelectNone.InvokeAsync();
+	private async Task RemoveAsync(HarnessWorkspace workspace)
+	{
+		await WorkspaceService.RemoveAsync(workspace.Id);
+		Workspaces = await WorkspaceService.ListAsync();
+		await OnRemoved.InvokeAsync(workspace.Id);
+	}
+	private Task CloseAsync() => OnClose.InvokeAsync();
+}

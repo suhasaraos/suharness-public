@@ -1,0 +1,404 @@
+@using Suharness.Abstractions
+@inject IPromptQueueService QueueService
+@inject IModelConfigurationService Models
+@implements IDisposable
+
+@if (Open)
+{
+	<div class="modal-backdrop" @onclick="CloseAsync">
+		<section class="queue-modal" role="dialog" aria-modal="true" aria-labelledby="queue-title" @onclick:stopPropagation="true">
+			<header class="queue-header">
+				<div>
+					<h2 id="queue-title">Prompt queue</h2>
+					<p>Schedule work for this workspace and chain jobs by dependency.</p>
+				</div>
+				<button class="icon-button" type="button" title="Close prompt queue" aria-label="Close prompt queue" @onclick="CloseAsync">&times;</button>
+			</header>
+
+			@if (!string.IsNullOrEmpty(StatusMessage))
+			{
+				<p class="settings-status queue-status" role="status">@StatusMessage</p>
+			}
+
+			<nav class="queue-toolbar" aria-label="Prompt queue views">
+				<div class="queue-tabs">
+					<button type="button" class="queue-tab @(ViewTab == "list" ? "active" : null)" @onclick="ShowList">Jobs <span>@Jobs.Count</span></button>
+					<button type="button" class="queue-tab @(ViewTab == "add" ? "active" : null)" disabled="@(!HasWorkspace)" @onclick="ShowAdd">New job</button>
+				</div>
+				<button type="button" class="secondary-button" disabled="@Busy" @onclick="RefreshAsync">@(Busy ? "Refreshing..." : "Refresh")</button>
+			</nav>
+
+			<main class="queue-body">
+				@if (!HasWorkspace)
+				{
+					<div class="queue-empty">
+						<strong>Select a workspace first</strong>
+						<p>Queued jobs need a workspace in which to run.</p>
+					</div>
+				}
+				else if (ViewTab == "add")
+				{
+					<div class="queue-editor">
+						<div class="queue-field full-field">
+							<label for="queue-prompt">Prompt</label>
+							<textarea id="queue-prompt" @bind="DraftPrompt" @bind:event="oninput" placeholder="What should the agent do?"></textarea>
+						</div>
+
+						<div class="queue-form-grid">
+							<div class="queue-field">
+								<label for="queue-model">Model</label>
+								<select id="queue-model" @bind="SelectedProviderModel">
+									<option value="">Workspace default</option>
+									@foreach (var provider in Providers)
+									{
+										@foreach (var model in provider.Profile.Models)
+										{
+											<option value="@($"{provider.Profile.Id}|{model.Id}")">@provider.Profile.DisplayName / @model.Name</option>
+										}
+									}
+								</select>
+							</div>
+
+							<div class="queue-field">
+								<label for="queue-effort">Reasoning effort</label>
+								<select id="queue-effort" @bind="DraftReasoningEffort">
+									<option value="">Model default</option>
+									<option value="High">High</option>
+									<option value="Medium">Medium</option>
+									<option value="Low">Low</option>
+									<option value="Minimal">Minimal</option>
+								</select>
+							</div>
+
+							<div class="queue-field">
+								<label for="queue-access">Access</label>
+								<select id="queue-access" @bind="DraftAccessMode">
+									<option value="@PromptAccessMode.Read">Read only</option>
+									<option value="@PromptAccessMode.Write">Workspace write</option>
+									<option value="@PromptAccessMode.Execute">Full access</option>
+								</select>
+								<small>Workspace write can run commands but cannot access paths outside the workspace.</small>
+							</div>
+
+							<div class="queue-field">
+								<label for="queue-run-at">Run at</label>
+								<input id="queue-run-at" type="datetime-local" @bind="DraftRunAtLocal" />
+								<small>Leave blank to run as soon as dependencies are ready.</small>
+							</div>
+
+							<div class="queue-field full-field">
+								<label for="queue-dependency">Run after</label>
+								<select id="queue-dependency" @bind="DraftDependencyPromptId">
+									<option value="">No dependency</option>
+									@foreach (var job in DependencyChoices)
+									{
+										<option value="@job.PromptId">@job.PromptId · @Shorten(job.Prompt, 64) (@job.Status)</option>
+									}
+								</select>
+								<small>This job runs only after the selected job completes successfully.</small>
+							</div>
+						</div>
+
+						<label class="queue-checkbox">
+							<input type="checkbox" @bind="DraftPlanMode" />
+							<span><strong>Plan mode</strong><small>Require plan review before implementation.</small></span>
+						</label>
+
+						<footer class="queue-editor-footer">
+							<button type="button" class="secondary-button" disabled="@Busy" @onclick="ShowList">Cancel</button>
+							<button type="button" class="primary-button" disabled="@(Busy || string.IsNullOrWhiteSpace(DraftPrompt))" @onclick="SubmitDraftAsync">@(Busy ? "Adding..." : "Add to queue")</button>
+						</footer>
+					</div>
+				}
+				else if (Jobs.Count == 0)
+				{
+					<div class="queue-empty">
+						<strong>No jobs yet</strong>
+						<p>Add a prompt to run it now, later, or after another job.</p>
+						<button type="button" class="primary-button" @onclick="ShowAdd">Create a job</button>
+					</div>
+				}
+				else
+				{
+					<ul class="queue-list">
+						@foreach (var job in Jobs)
+						{
+							<li class="queue-job">
+								<div class="queue-job-heading">
+									<div class="queue-job-identity">
+										<strong>@job.PromptId</strong>
+										<span class="status-badge status-@job.Status.ToString().ToLowerInvariant()">@job.Status</span>
+									</div>
+									<div class="queue-job-actions">
+										@if (job.SessionId is { } sessionId)
+										{
+											<button type="button" class="secondary-button" disabled="@Busy" @onclick="() => OpenSessionAsync(sessionId)">Open session</button>
+										}
+										@if (CanCancel(job))
+										{
+											<button type="button" class="danger-button" disabled="@Busy" @onclick="() => CancelJobAsync(job.PromptId)">Cancel</button>
+										}
+									</div>
+								</div>
+
+								<p class="queue-job-prompt">@job.Prompt</p>
+
+								<div class="queue-job-meta">
+									<span>@(job.Provider is null ? "Default model" : $"{job.Provider} / {job.Model}")</span>
+									@if (!string.IsNullOrWhiteSpace(job.ReasoningEffort)) { <span>@job.ReasoningEffort effort</span> }
+									<span>@AccessLabel(job.AccessMode)</span>
+									@if (job.PlanMode) { <span>Plan mode</span> }
+									@if (job.Dependencies is { Count: > 0 }) { <span>After @string.Join(", ", job.Dependencies.Select(d => d.DependsOnPromptId))</span> }
+									@if (job.RunAt is { } runAt) { <span>Runs @runAt.ToLocalTime().ToString("g")</span> }
+								</div>
+
+								@if (!string.IsNullOrWhiteSpace(job.Result))
+								{
+									<div class="queue-outcome success"><strong>Result</strong><span>@Shorten(job.Result, 220)</span></div>
+								}
+								@if (!string.IsNullOrWhiteSpace(job.Error))
+								{
+									<div class="queue-outcome error"><strong>Details</strong><span>@job.Error</span></div>
+								}
+
+								<div class="queue-job-times">
+									<span>Created @job.CreatedAt.ToLocalTime().ToString("g")</span>
+									@if (job.StartedAt is { } started) { <span>Started @started.ToLocalTime().ToString("g")</span> }
+									@if (job.CompletedAt is { } completed) { <span>Finished @completed.ToLocalTime().ToString("g")</span> }
+								</div>
+							</li>
+						}
+					</ul>
+				}
+			</main>
+		</section>
+	</div>
+}
+
+<style>
+	.queue-modal { width:min(880px,100%); height:min(760px,calc(100vh - 48px)); display:flex; flex-direction:column; overflow:hidden; border:1px solid #d9dde2; border-radius:9px; background:#fff; box-shadow:0 24px 80px #1118273d; }
+	.queue-header { flex:0 0 auto; display:flex; align-items:flex-start; justify-content:space-between; gap:20px; padding:22px 24px 15px; }
+	.queue-header h2 { margin:0 0 5px; font-size:21px; }
+	.queue-header p { margin:0; color:var(--muted); font-size:13px; }
+	.queue-status { flex:0 0 auto; margin:0 24px 12px; }
+	.queue-toolbar { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 24px 14px; border-bottom:1px solid var(--border); }
+	.queue-tabs { display:flex; gap:4px; padding:3px; border-radius:7px; background:#f1f3f5; }
+	.queue-tab { height:30px; padding:0 11px; border:0; border-radius:5px; background:transparent; color:#636b75; cursor:pointer; font-size:12px; }
+	.queue-tab.active { background:#fff; color:var(--text); box-shadow:0 1px 3px #1118271a; font-weight:600; }
+	.queue-tab span { min-width:18px; display:inline-block; margin-left:4px; padding:1px 5px; border-radius:9px; background:#e4e7eb; font-size:10px; }
+	.queue-tab:disabled { opacity:.5; cursor:default; }
+	.queue-body { min-height:0; flex:1; overflow:auto; padding:18px 24px 24px; background:#fafbfc; }
+	.queue-editor { padding:18px; border:1px solid var(--border); border-radius:8px; background:#fff; }
+	.queue-form-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; }
+	.queue-field { min-width:0; }
+	.queue-field.full-field { grid-column:1/-1; }
+	.queue-field label { display:block; margin-bottom:5px; color:#59616b; font-size:11px; font-weight:600; }
+	.queue-field input,.queue-field select,.queue-field textarea { width:100%; border:1px solid #d4d8de; border-radius:6px; background:#fff; color:var(--text); font:12px inherit; outline:none; }
+	.queue-field input,.queue-field select { height:36px; padding:0 9px; }
+	.queue-field textarea { min-height:110px; padding:9px 10px; resize:vertical; line-height:1.45; }
+	.queue-field input:focus,.queue-field select:focus,.queue-field textarea:focus { border-color:#8fa8d4; box-shadow:0 0 0 2px #dce6f8; }
+	.queue-field small,.queue-checkbox small { display:block; margin-top:4px; color:#8a929c; font-size:10px; font-weight:400; line-height:1.4; }
+	.queue-checkbox { display:flex; align-items:flex-start; gap:8px; margin-top:16px; color:#59616b; cursor:pointer; font-size:11px; }
+	.queue-checkbox input { margin:2px 0 0; }
+	.queue-checkbox strong { font-size:11px; }
+	.queue-editor-footer { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; padding-top:14px; border-top:1px solid var(--border); }
+	.queue-list { display:grid; gap:10px; margin:0; padding:0; list-style:none; }
+	.queue-job { padding:14px 15px; border:1px solid var(--border); border-radius:8px; background:#fff; }
+	.queue-job-heading,.queue-job-identity { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+	.queue-job-identity { justify-content:flex-start; }
+	.queue-job-actions { display:flex; align-items:center; gap:6px; }
+	.queue-job-identity>strong { font:600 12px "IBM Plex Mono",monospace; }
+	.status-badge { padding:3px 7px; border-radius:10px; font-size:9px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; }
+	.status-ready { background:#e0f2fe; color:#0369a1; }
+	.status-waiting { background:#fef3c7; color:#92400e; }
+	.status-queued { background:#f3f4f6; color:#374151; }
+	.status-running { background:#dbeafe; color:#1d4ed8; }
+	.status-completed { background:#dcfce7; color:#15803d; }
+	.status-failed { background:#fee2e2; color:#b91c1c; }
+	.status-blocked { background:#ffedd5; color:#c2410c; }
+	.status-cancelled { background:#f3f4f6; color:#6b7280; }
+	.queue-job-prompt { margin:10px 0 8px; color:#24282e; font-size:13px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
+	.queue-job-meta,.queue-job-times { display:flex; flex-wrap:wrap; gap:5px 12px; color:#6d7580; font-size:10px; }
+	.queue-job-meta span:not(:last-child)::after { content:"·"; position:relative; left:7px; color:#b2b7bd; }
+	.queue-job-times { margin-top:9px; color:#9298a0; }
+	.queue-outcome { display:grid; grid-template-columns:48px minmax(0,1fr); gap:7px; margin-top:10px; padding:7px 9px; border-radius:6px; font-size:11px; line-height:1.45; }
+	.queue-outcome.success { background:#f0f8f2; color:#26703d; }
+	.queue-outcome.error { background:#fff2f2; color:#a43d46; }
+	.queue-outcome span { overflow-wrap:anywhere; }
+	.queue-empty { height:100%; min-height:240px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; color:#737b85; }
+	.queue-empty strong { color:#343a42; font-size:14px; }
+	.queue-empty p { margin:6px 0 16px; font-size:12px; }
+	@@media (max-width:760px) {
+		.queue-modal { height:calc(100vh - 16px); }
+		.queue-header { padding:18px 15px 13px; }
+		.queue-header p { max-width:280px; }
+		.queue-toolbar { padding:0 15px 12px; }
+		.queue-body { padding:14px; }
+		.queue-form-grid { grid-template-columns:1fr; }
+		.queue-field.full-field { grid-column:auto; }
+		.queue-job-meta span::after { display:none; }
+	}
+</style>
+
+@code {
+	[Parameter] public bool Open { get; set; }
+	[Parameter] public string? WorkspacePath { get; set; }
+	[Parameter] public EventCallback OnClose { get; set; }
+	[Parameter] public EventCallback<Guid> OnOpenSession { get; set; }
+
+	private string ViewTab = "list";
+	private string? StatusMessage;
+	private IReadOnlyList<PromptJob> Jobs = [];
+	private IReadOnlyList<ConfiguredModelProvider> Providers = [];
+	private bool Busy;
+	private bool Disposed;
+
+	private string DraftPrompt = string.Empty;
+	private string SelectedProviderModel = string.Empty;
+	private string DraftReasoningEffort = string.Empty;
+	private PromptAccessMode DraftAccessMode = PromptAccessMode.Write;
+	private bool DraftPlanMode;
+	private DateTime? DraftRunAtLocal;
+	private string DraftDependencyPromptId = string.Empty;
+
+	private bool HasWorkspace => !string.IsNullOrWhiteSpace(WorkspacePath);
+	private IEnumerable<PromptJob> DependencyChoices => Jobs.Where(job => job.Status == PromptJobStatus.Completed || CanCancel(job));
+
+	protected override async Task OnParametersSetAsync()
+	{
+		if (!Open) return;
+		await RefreshAsync();
+		try
+		{
+			Providers = (await Models.GetSnapshotAsync()).Providers;
+		}
+		catch (Exception ex)
+		{
+			StatusMessage = $"Models could not be loaded: {ex.Message}";
+		}
+	}
+
+	protected override void OnInitialized() => QueueService.Changed += OnQueueChanged;
+
+	private void OnQueueChanged()
+	{
+		if (Disposed) return;
+		_ = InvokeAsync(async () =>
+		{
+			if (Disposed) return;
+			await LoadJobsAsync();
+			StateHasChanged();
+		});
+	}
+
+	private async Task RefreshAsync()
+	{
+		Busy = true;
+		StatusMessage = null;
+		try { await LoadJobsAsync(); }
+		catch (Exception ex) { StatusMessage = ex.Message; }
+		finally { Busy = false; }
+	}
+
+	private async Task LoadJobsAsync() => Jobs = HasWorkspace
+		? await QueueService.ListAsync(WorkspacePath)
+		: [];
+
+	private void ShowList() { StatusMessage = null; ViewTab = "list"; }
+	private void ShowAdd() { StatusMessage = null; if (HasWorkspace) ViewTab = "add"; }
+
+	private async Task SubmitDraftAsync()
+	{
+		if (Busy || string.IsNullOrWhiteSpace(DraftPrompt) || !HasWorkspace) return;
+		Busy = true;
+		StatusMessage = null;
+		try
+		{
+			string? provider = null;
+			string? model = null;
+			var separator = SelectedProviderModel.IndexOf('|');
+			if (separator > 0 && separator < SelectedProviderModel.Length - 1)
+			{
+				provider = SelectedProviderModel[..separator];
+				model = SelectedProviderModel[(separator + 1)..];
+			}
+
+			DateTimeOffset? runAt = DraftRunAtLocal is { } local
+				? new DateTimeOffset(DateTime.SpecifyKind(local, DateTimeKind.Local)).ToUniversalTime()
+				: null;
+			IReadOnlyList<PromptJobDependency>? dependencies = !string.IsNullOrWhiteSpace(DraftDependencyPromptId)
+				? [new PromptJobDependency(DraftDependencyPromptId.Trim())]
+				: null;
+
+			await QueueService.EnqueueAsync(new PromptJobDraft(
+				DraftPrompt,
+				WorkspacePath!,
+				provider,
+				model,
+				string.IsNullOrWhiteSpace(DraftReasoningEffort) ? null : DraftReasoningEffort,
+				DraftAccessMode,
+				DraftPlanMode,
+				RunAt: runAt,
+				Dependencies: dependencies));
+
+			ResetDraft();
+			ViewTab = "list";
+			await LoadJobsAsync();
+		}
+		catch (Exception ex)
+		{
+			StatusMessage = ex.Message;
+		}
+		finally
+		{
+			Busy = false;
+		}
+	}
+
+	private async Task CancelJobAsync(string promptId)
+	{
+		if (Busy) return;
+		Busy = true;
+		StatusMessage = null;
+		try
+		{
+			if (!await QueueService.CancelAsync(promptId))
+				StatusMessage = $"{promptId} could not be cancelled because it has already finished.";
+			await LoadJobsAsync();
+		}
+		catch (Exception ex) { StatusMessage = ex.Message; }
+		finally { Busy = false; }
+	}
+
+	private Task OpenSessionAsync(Guid sessionId) => OnOpenSession.InvokeAsync(sessionId);
+
+	private void ResetDraft()
+	{
+		DraftPrompt = string.Empty;
+		DraftDependencyPromptId = string.Empty;
+		DraftRunAtLocal = null;
+	}
+
+	private async Task CloseAsync()
+	{
+		StatusMessage = null;
+		ViewTab = "list";
+		await OnClose.InvokeAsync();
+	}
+
+	private static bool CanCancel(PromptJob job) => job.Status is PromptJobStatus.Queued or PromptJobStatus.Waiting or PromptJobStatus.Ready or PromptJobStatus.Running;
+	private static string AccessLabel(PromptAccessMode mode) => mode switch
+	{
+		PromptAccessMode.Read => "Read only",
+		PromptAccessMode.Write => "Workspace write",
+		PromptAccessMode.Execute => "Full access",
+		_ => mode.ToString(),
+	};
+	private static string Shorten(string text, int max) => string.IsNullOrEmpty(text) || text.Length <= max ? text : text[..max] + "...";
+
+	public void Dispose()
+	{
+		Disposed = true;
+		QueueService.Changed -= OnQueueChanged;
+	}
+}

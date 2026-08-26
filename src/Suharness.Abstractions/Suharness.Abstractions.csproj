@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.17.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The agent's prompt text lives in the repository's Prompts folder, not in C# literals.
+      It is carried twice on purpose. The embedded copy is the fallback a published binary can
+      never be missing; the copied-to-output copy is what PromptCatalog reads first, so a prompt
+      can be edited beside the binary and picked up on the next start with no rebuild.
+      This project holds them because it is the only one every other project references.
+    -->
+    <EmbeddedResource Include="..\..\Prompts\**\*.md" Exclude="..\..\Prompts\README.md" LinkBase="Prompts" />
+    <!-- README.md is copied but not embedded: it documents how to edit the prompts sitting beside
+         the binary, and is not itself a prompt. -->
+    <Content Include="..\..\Prompts\**\*.md" LinkBase="Prompts" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
