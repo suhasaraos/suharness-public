@@ -721,7 +721,12 @@ public sealed class ToolPipelineTests : IDisposable
 
 	// ─── Fixtures ────────────────────────────────────────────────────────
 
-	private static TurnContext Turn() => new(Guid.NewGuid(), "C:\\workspace", 1, 1, CancellationToken.None);
+	private static TurnContext Turn() => new(
+		Guid.NewGuid(),
+		Path.Combine(Path.GetTempPath(), "suharness-tool-pipeline-workspace"),
+		1,
+		1,
+		CancellationToken.None);
 
 	/// <summary>Answer the next question this session raises, the way the composer's panel would.</summary>
 	private static void AnswerWith(UserQuestionBroker questions, string choice) =>
