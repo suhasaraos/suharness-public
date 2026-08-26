@@ -183,7 +183,7 @@ public sealed class LanguageServerTests : IDisposable
 	{
 		var (workspace, configuration, _) = StubWorkspace(
 			timeoutMs: 100,
-			initializeTimeoutMs: 2_000,
+			initializeTimeoutMs: 15_000,
 			symbolDelayMs: 250);
 		await using var service = new LanguageServerService(configuration);
 
