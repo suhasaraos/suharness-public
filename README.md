@@ -88,12 +88,6 @@ Both tools also visit files in a stable path order, in the indexed path and the 
 is not cosmetic for `grep`: it stops retaining after 250 matches, so traversal order decides which
 matches survive the cap.
 
-On this repository (928 files) the index builds in about 13 ms, twelve subsequent searches cost
-nothing measurable, and one `glob` drops from about 13 ms to 2 ms with byte-identical output. `grep`
-gains much less — roughly 14 ms to 13 ms — because its cost is dominated by reading file contents
-rather than by discovering which files to read. The index removes the discovery half; the reading
-half is irreducible.
-
 ### Finding a declaration by name
 
 `symbol` answers from a declaration table built over the same walk. A tolerant line scanner extracts
