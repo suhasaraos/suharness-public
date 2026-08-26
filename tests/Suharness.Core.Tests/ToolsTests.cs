@@ -484,7 +484,8 @@ public sealed class ToolsTests : IDisposable
 			.Select(tool => tool.Name)
 			.ToArray();
 		Assert.Contains("workspace_changes", verifyTools);
-		Assert.Contains("powershell", verifyTools);
+		Assert.Contains(OperatingSystem.IsWindows() ? "powershell" : "bash", verifyTools);
+		Assert.DoesNotContain(OperatingSystem.IsWindows() ? "bash" : "powershell", verifyTools);
 	}
 
 	[Fact]

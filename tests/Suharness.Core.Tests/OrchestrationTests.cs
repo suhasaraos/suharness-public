@@ -9,13 +9,23 @@ using System.Text;
 namespace Suharness.Core.Tests;
 
 /// <summary>
+/// These integration tests drive complete runtimes with real persistence and cancellation handshakes.
+/// Running them beside the rest of the suite can starve their bounded coordination waits on hosted CI.
+/// </summary>
+[CollectionDefinition(OrchestrationTests.CollectionName, DisableParallelization = true)]
+public sealed class OrchestrationCollection;
+
+/// <summary>
 /// Tests of the multi-agent and orchestration surface: the agent inbox, same-session goals and
 /// their round driver, background jobs, the subagent fabric, lifecycle interception, and turn
 /// cancellation. These cover the behaviours the harness previously declared but did not deliver —
 /// tools that were advertised to the model while nothing behind them actually ran.
 /// </summary>
+[Collection(CollectionName)]
 public sealed class OrchestrationTests : IDisposable
 {
+	internal const string CollectionName = "orchestration";
+
 	private sealed record FinalHandoff(string Status, string Summary);
 
 	private readonly string _root = Directory.CreateTempSubdirectory("suharness-orch-").FullName;
