@@ -31,6 +31,8 @@ public sealed class LanguageServerTests : IDisposable
 	/// </summary>
 	private const string StubServer = """
 		const fs = require('fs');
+		const path = require('path');
+		const { pathToFileURL } = require('url');
 		const counter = process.argv[2];
 		let buffer = Buffer.alloc(0);
 		function send(value) {
@@ -57,7 +59,7 @@ public sealed class LanguageServerTests : IDisposable
 		        name: message.params.query,
 		        kind: 5,
 		        containerName: 'Contoso',
-		        location: { uri: 'file:///' + process.env.STUB_ROOT.replace(/\\/g, '/') + '/Sample.cs',
+		        location: { uri: pathToFileURL(path.join(process.env.STUB_ROOT, 'Sample.cs')).href,
 		                    range: { start: { line: 4, character: 2 }, end: { line: 4, character: 9 } } }
 		      }] };
 		      const delay = Number(process.env.STUB_SYMBOL_DELAY_MS || 0);

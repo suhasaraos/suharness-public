@@ -430,7 +430,7 @@ public sealed class ToolPipelineTests : IDisposable
 			Completion("implementation done"),
 			ToolCall("write", "{\"file_path\":\"tests/ServiceTests.cs\",\"content\":\"tests\"}", "call_3"),
 			Completion("tests added"),
-			ToolCall("powershell", "{\"command\":\"Write-Output 'Passed: 1, Failed: 0'\",\"description\":\"Run focused tests\"}", "call_4"),
+			ToolCall("bash", "{\"command\":\"echo 'Passed: 1, Failed: 0'\",\"description\":\"Run focused tests\"}", "call_4"),
 			Completion("done"));
 
 		await runtime.SubmitAsync(session.Id, "Implement the service and add unit tests covering it.");

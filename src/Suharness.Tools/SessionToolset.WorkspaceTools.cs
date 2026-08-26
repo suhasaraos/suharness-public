@@ -261,14 +261,27 @@ public sealed partial class SessionToolset
 		if (ToolProfile == AgentToolProfile.WorkflowVerify
 			&& Interlocked.CompareExchange(ref _workflowVerifyWorkspaceChangesCalls, 1, 0) != 0)
 			return "Error: Workflow Verifier must call workspace_changes exactly once. Continue with the native build and focused tests using the evidence already returned.";
-		const string command = "git status --short --untracked-files=all; Write-Output '--- TRACKED DIFF ---'; git diff --no-ext-diff --unified=3 -- .";
 		try
 		{
-			return await PowerShellTool.ExecuteAsync(Scope, command, 60_000, _workspaceRoot, cancellationToken);
+			var status = await ProcessRunner.RunAsync(
+				"git", ["status", "--short", "--untracked-files=all"], _workspaceRoot, 60_000, cancellationToken);
+			if (status.ExitCode != 0 || status.TimedOut)
+				return "Error: git status failed.\n" + ProcessRunner.Render(status);
+
+			var diff = await ProcessRunner.RunAsync(
+				"git", ["diff", "--no-ext-diff", "--unified=3", "--", "."], _workspaceRoot, 60_000, cancellationToken);
+			if (diff.ExitCode != 0 || diff.TimedOut)
+				return "Error: git diff failed.\n" + ProcessRunner.Render(diff);
+
+			var output = new StringBuilder(status.Stdout);
+			if (output.Length > 0 && output[^1] != '\n') output.AppendLine();
+			output.AppendLine("--- TRACKED DIFF ---");
+			output.Append(diff.Stdout);
+			return output.ToString();
 		}
-		catch (ToolInputException exception)
+		catch (SystemException exception) when (exception is not OperationCanceledException)
 		{
-			return $"Error: {exception.Message}";
+			return $"Error: could not run git: {exception.Message}";
 		}
 	}
 
