@@ -32,10 +32,10 @@ jobs:
         os: [windows-latest, ubuntu-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
@@ -49,15 +49,16 @@ jobs:
 
       - name: Test
         run: >
-          dotnet test tests/Suharness.Core.Tests/Suharness.Core.Tests.csproj
+          dotnet test --project tests/Suharness.Core.Tests/Suharness.Core.Tests.csproj
           --configuration Release
           --no-build
-          --logger "trx;LogFileName=test-results.trx"
+          --report-xunit-trx
+          --report-xunit-trx-filename test-results.trx
           --results-directory ${{ runner.temp }}/test-results
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.os }}
           path: ${{ runner.temp }}/test-results
@@ -67,10 +68,10 @@ jobs:
     name: Formatting
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
@@ -84,10 +85,10 @@ jobs:
     name: Dependency audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 

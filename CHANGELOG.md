@@ -54,6 +54,9 @@ no C# API moved, because they alter behaviour for existing sessions.
 
 ### Changed
 
+- **Dependencies and test platform.** Updated Microsoft Agent Framework to 1.19,
+  Model Context Protocol to 2.2, the GitHub Actions toolchain, and the .NET test
+  tooling. Tests now run on xUnit v3 through Microsoft Testing Platform.
 - **Language servers are pooled and long-lived.** A server is now initialised
   once per workspace and reused for every later query, with idle shutdown,
   crash recovery, and document sync on change. Each query previously started a
@@ -144,7 +147,7 @@ contribute to.
 
 - [SECURITY.md](SECURITY.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
   [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-- [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) covering the full 44-package
+- [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) covering the full 53-package
   dependency closure, all permissive.
 
 The dependency notice is updated whenever the restored package closure changes.

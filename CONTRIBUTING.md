@@ -24,7 +24,7 @@ repository deliberately ships no endpoint or credential.
 ```bash
 dotnet restore Suharness.slnx
 dotnet build   Suharness.slnx
-dotnet test    tests/Suharness.Core.Tests/Suharness.Core.Tests.csproj
+dotnet test --project tests/Suharness.Core.Tests/Suharness.Core.Tests.csproj
 ```
 
 Run the UI:

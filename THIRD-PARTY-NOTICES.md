@@ -8,18 +8,18 @@ redistributed in binary form; no third-party source code is vendored into this
 repository.
 
 Generated for the dependency closure of `Suharness.slnx` on .NET 10, as reported
-by `dotnet list Suharness.slnx package --include-transitive`. The closure is 44
+by `dotnet list Suharness.slnx package --include-transitive`. The closure is 53
 packages; every one of them is named below.
 
 ## Licenses in use
 
 | License | Packages |
 | --- | --- |
-| MIT | 32 |
-| Apache-2.0 | 10 |
+| MIT | 39 |
+| Apache-2.0 | 12 |
 | BSD-3-Clause | 1 |
 | BSD-2-Clause | 1 |
-| **Total** | **44** |
+| **Total** | **53** |
 
 No package in the closure is licensed under the GPL, LGPL, AGPL, or any
 source-available or proprietary license.
@@ -29,12 +29,12 @@ source-available or proprietary license.
 - `Microsoft.Agents.AI`, `Microsoft.Agents.AI.Abstractions`, `Microsoft.Agents.AI.OpenAI` — Copyright (c) Microsoft Corporation
 - `Microsoft.Extensions.AI`, `Microsoft.Extensions.AI.Abstractions`, `Microsoft.Extensions.AI.Evaluation`, `Microsoft.Extensions.AI.OpenAI` — Copyright (c) Microsoft Corporation
 - `Microsoft.Extensions.Caching.Abstractions`, `Microsoft.Extensions.Compliance.Abstractions`, `Microsoft.Extensions.Configuration.Abstractions`, `Microsoft.Extensions.DependencyInjection.Abstractions`, `Microsoft.Extensions.Diagnostics.Abstractions`, `Microsoft.Extensions.FileProviders.Abstractions`, `Microsoft.Extensions.FileSystemGlobbing`, `Microsoft.Extensions.Hosting.Abstractions`, `Microsoft.Extensions.Logging.Abstractions`, `Microsoft.Extensions.ObjectPool`, `Microsoft.Extensions.Options`, `Microsoft.Extensions.Primitives`, `Microsoft.Extensions.VectorData.Abstractions` — Copyright (c) Microsoft Corporation
-- `Microsoft.AspNetCore.App.Internal.Assets` — Copyright (c) Microsoft Corporation
+- `Microsoft.ApplicationInsights`, `Microsoft.AspNetCore.App.Internal.Assets`, `Microsoft.Bcl.AsyncInterfaces` — Copyright (c) Microsoft Corporation
 - `Microsoft.ML.Tokenizers` — Copyright (c) Microsoft Corporation
 - `Microsoft.NET.Test.Sdk`, `Microsoft.TestPlatform.ObjectModel`, `Microsoft.TestPlatform.TestHost`, `Microsoft.CodeCoverage` — Copyright (c) Microsoft Corporation
-- `System.ClientModel`, `System.Memory.Data`, `System.Numerics.Tensors` — Copyright (c) Microsoft Corporation
+- `Microsoft.Testing.Extensions.Telemetry`, `Microsoft.Testing.Extensions.TrxReport.Abstractions`, `Microsoft.Testing.Platform`, `Microsoft.Testing.Platform.MSBuild` — Copyright (c) Microsoft Corporation
+- `Microsoft.Win32.Registry`, `System.ClientModel`, `System.Memory.Data`, `System.Numerics.Tensors`, `System.Security.AccessControl` — Copyright (c) Microsoft Corporation
 - `OpenAI` — Copyright (c) OpenAI
-- `Newtonsoft.Json` — Copyright (c) James Newton-King
 - `coverlet.collector` — Copyright (c) Toni Solarin-Sodara
 
 ```
@@ -62,9 +62,7 @@ SOFTWARE.
 ## Apache-2.0
 
 - `ModelContextProtocol`, `ModelContextProtocol.Core` — Copyright (c) Anthropic and contributors
-- `xunit`, `xunit.assert`, `xunit.analyzers`, `xunit.core`, `xunit.extensibility.core`, `xunit.extensibility.execution`, `xunit.runner.visualstudio` — Copyright (c) .NET Foundation and Contributors
-- `xunit.abstractions` — Copyright (c) .NET Foundation and Contributors. Declares no SPDX
-  expression; its package metadata links to the xunit project license, which is Apache-2.0.
+- `xunit.analyzers`, `xunit.runner.visualstudio`, `xunit.v3`, `xunit.v3.assert`, `xunit.v3.common`, `xunit.v3.core.mtp-v2`, `xunit.v3.extensibility.core`, `xunit.v3.mtp-v2`, `xunit.v3.runner.common`, `xunit.v3.runner.inproc.console` — Copyright (c) .NET Foundation and Contributors
 
 These are distributed under the same license as SuHarness itself; see `LICENSE`.
 
