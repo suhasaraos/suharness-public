@@ -28,6 +28,12 @@ score. Once I started pushing smaller models beyond code completion and into rea
 I began to notice something: sometimes the model was not the biggest problem. The harness around
 the model was.
 
+![SuHarness Team mode completing and pushing a Unity repository change with every workflow role assigned to a local Ornith model](images/suharness-team-workflow-unity.png)
+
+*SuHarness completing and pushing a Unity gameplay change with Team mode configured entirely on a
+locally hosted Ornith model. Role assignments, workflow progress, token use, and modified files
+remain visible while the agent works.*
+
 > This article was prepared with AI assistance. The underlying work, experiments, failures, and
 > conclusions are mine. AI helped organize the implementation decisions, session conversations,
 > and research notes; I reviewed the final text against the project.
